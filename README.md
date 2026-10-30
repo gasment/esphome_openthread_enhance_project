@@ -36,11 +36,11 @@ features:
 基于测试版本：ESPHome 2026.10.1 / ESP-IDF 5.5.6 /Zephyr 2.9.2
 |项目|平台适配|功能|
 | :----------------------------------------------------: | :----------------------------------------------: | :---------------------------------------------: |
-|[Thread边界路由](/Thread边界路由/Thread边界路由)|✅ESP32 ❌nRF52|负责Thread内外部的通讯转换|
-|[Thread网关](/Thread网关/Thread网关)|✅ESP32 ❌nRF52|负责管理Thread节点并代理HA实体|
-|Thread节点-[API模式](/Thread节点/API模式)|✅ESP32 ✅nRF52|接入Thread网络并直接连接到HA|
-|Thread节点-[网关模式](/Thread节点/网关模式)|✅ESP32 ✅nRF52|接入Thread网络并通过Thread网关代理HA实体|
-|Thread节点-[P2P](/Thread节点/P2P模式)|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
+|Thread边界路由|✅ESP32 ❌nRF52|负责Thread内外部的通讯转换|
+|Thread网关|✅ESP32 ❌nRF52|负责管理Thread节点并代理HA实体|
+|Thread节点-API模式|✅ESP32 ✅nRF52|接入Thread网络并直接连接到HA|
+|Thread节点-网关模式|✅ESP32 ✅nRF52|接入Thread网络并通过Thread网关代理HA实体|
+|Thread节点-P2P|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
 |Thread节点-访问LAN/WAN|✅ESP32 ❌nRF52|Thread节点可访问外部网络资源|
 
 
@@ -48,11 +48,11 @@ features:
 
 |项目|功能|
 | :----------------------------------------------------: | :---------------------------------------------: |
-|[深度睡眠扩展](/nRF52平台额外功能/深度睡眠扩展)|拓展官方deepsleep组件，以支持完善的休眠功能|
-|[RTT日志](/nRF52平台额外功能/RTT日志)|实现SWD烧录+日志双功能|
-|[无线OTA&日志](/nRF52平台额外功能/无线OTA)|通过Thread网络进行OTA和日志读取|
-|[UART配置](/nRF52平台额外功能/自定义UART)|修复nRF52平台缺失的UART组件功能|
-|[电池电量](/nRF52平台额外功能/电池电量)|通过VDD电压估算电池电量|
+|深度睡眠扩展|拓展官方deepsleep组件，以支持完善的休眠功能|
+|RTT日志|实现SWD烧录+日志双功能|
+|无线OTA&日志|通过Thread网络进行OTA和日志读取|
+|UART配置|修复nRF52平台缺失的UART组件功能|
+|电池电量|通过VDD电压估算电池电量|
 
 
 ## 使用限制
