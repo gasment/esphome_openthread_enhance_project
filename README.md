@@ -42,9 +42,8 @@ features:
 |Thread节点-[网关模式](/Thread节点/网关模式)|✅ESP32 ✅nRF52|接入Thread网络并通过Thread网关代理HA实体|
 |Thread节点-[P2P](/Thread节点/P2P模式)|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
 |Thread节点-访问LAN/WAN|✅ESP32 ❌nRF52|Thread节点可访问外部网络资源|
-::: warning
-本项目两个平台的组件路径和组件名有所区分，esp32为原始组件名，nrf52则添加`_nrf52`后缀，如文档某些部分遗留指明，请手动为nrf52相关组件添加`_nrf52`后缀
-:::
+
+
 ## nRF52平台额外功能
 
 |项目|功能|
