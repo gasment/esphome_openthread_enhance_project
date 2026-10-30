@@ -1,0 +1,15 @@
+{
+  "forked_from": "esphome_enhance_thread/components/thread_sed_transporter",
+  "fork_version": "2.0.0",
+  "esphome_baseline": "2026.9.1",
+  "runtime_dependency_on_original": false,
+  "sha256": {
+    "automation.h": "600bfa6186d6f4658ae27937fe232c2187f6a492916adfeaef168e6fe23325c4",
+    "delta.h": "5ee52dc529aff7ef0d53c04f568148a5dfb821b3602aa3cacc85587351c6b67e",
+    "text_record.h": "e1386947b0964ef27405e4978d7b4aba92089d72db5b1e3ad08fbd9db49e5805",
+    "thread_sed_transporter.cpp": "60aac266bd1bb32801728f7c0d79be1308ad6e3fd90d53764bf5348a584c778e",
+    "thread_sed_transporter.h": "c33ee8f20038628e2d779ff4240813b1bc2ef252009debe0c12095b26f10fca3",
+    "__init__.py": "e64fc596d52ba9adb231435c646c527a2aa739459573dfb0a00f32927165051d"
+  },
+  "report_semantics": "event-driven send; explicit scalar/list entity_id; freeze at invocation; force or delta/value filtering; per-entity baseline committed on ACK or local submission without ACK"
+}

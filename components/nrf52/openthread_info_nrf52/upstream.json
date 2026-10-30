@@ -1,0 +1,18 @@
+{
+  "forked_from": "esphome_enhance_thread/components/openthread_info",
+  "esphome_baseline": "2026.9.1",
+  "runtime_dependency_on_original": false,
+  "sha256": {
+    "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary_sensor.py": "48288a7f289ab53586e1ffe2e8dbe6f79157ded459d5c68b6cf7f3a1df016e47",
+    "openthread_info_binary_sensor.cpp": "a4bae49a4de6d7603bc3add1e8a2d48a3d155ab5b9c8a515389b7c6c37b01e92",
+    "openthread_info_binary_sensor.h": "0ccd4be548ff9efc13d66c6a2b5aa70c09c9543ae32bfcab68f37383aaa16262",
+    "openthread_info_sensor.cpp": "2d15259cc506d3f2113d54448bbbae9f9565e64e9684bcf977dd747105687176",
+    "openthread_info_sensor.h": "d0c921d7ef0b29a1e58d8d87dd7b6b0bf62f20bd50563037dda8c5bf1b89dd93",
+    "openthread_info_text_sensor.cpp": "145050dfc735d9f530c31b1dbb7042bb932aadf7b4a57a9baf37d3c277d689ff",
+    "openthread_info_text_sensor.h": "6255cb575dc3dc5f6c1ab1f0f64a2370d6b22f0fae372566464155481a9f8c81",
+    "sensor.py": "8d2ed895493cbb89cbb951a88826b20a6e855de3c0dbbc908a484d9ac14d7d10",
+    "text_sensor.py": "19354d289787b3ca7f258484a85e5dc76e0c9d42094f74f22b2a5cf05b966ba0"
+  },
+  "fork_version": "1.0.0"
+}

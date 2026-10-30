@@ -1,0 +1,14 @@
+{
+  "forked_from": "installed ESPHome components/deep_sleep (including local Zephyr implementation)",
+  "esphome_baseline": "2026.9.1",
+  "ncs_baseline": "2.9.2",
+  "fork_version": "2.2.0",
+  "implementation": "independent System ON lifecycle; no runtime import of original component",
+  "runtime_dependency_on_original": false,
+  "sha256": {
+    "__init__.py": "e3a2c4de66799975a4c440676ec0dbdaf758fc6f7ba05652d1d8e731b3c7e057",
+    "deep_sleep_component.h": "297a4b25ddba9eda303bfd4109689fbbc3b65c244708009843902ccf9abb3a9b",
+    "deep_sleep_component.cpp": "be57acbbaa5a1937a23c3fd86f3d3f66ce0e6026bd1a2d33ff5689aa11404077",
+    "deep_sleep_zephyr.cpp": "29d509687d1fd3b16203905d106cd0bae35103cdc3bb1dcc4612efc45cd5cfd2"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "forked_from": "esphome_enhance_thread/components/openthread",
+  "esphome_baseline": "2026.9.1",
+  "runtime_dependency_on_original": false,
+  "sha256": {
+    "__init__.py": "df5b139cad00d04022d44461878b8d72ee2b826742e80a0746f3959620baa744",
+    "automation.cpp": "efba615f3190c2285e78ae7eb849c961ac01bb92192ae45d5e14eaec3ca11c4b",
+    "automation.h": "4f6bea33bba3babb36c9bfc5ce80421a93a56c3bc79d3fb1d082453dd75697c3",
+    "const.py": "7543bdca57ac86f33027803c0afa9e4609e73a5a1818bf40687bee6f77b4ecf7",
+    "dataset.py": "6ad333129874ef9fe34a04122e0af24d07ee20aca12628008adbe6b6bec1d90e",
+    "openthread.cpp": "8e36c36634b58d4bc97ed9b1859fd1ef3597887dcab39d5647a0a43ff4b78260",
+    "openthread.h": "719aaf485764ee59b283abe173dcc44cc1d6528ca4779867d648fa309a9ee939",
+    "openthread_dns_debug.cpp": "638d629e634f077e6d0d0538a3c1e9368c3bcb6cf77429f95aaad3d1134e7a13",
+    "openthread_esp.cpp": "5f9bd4362ac19ae9cc1cdc29fa600eb67a1ba121ccad87d2bad95fc311062aa7",
+    "openthread_zephyr.cpp": "ba8727414c93f64c173c196bcd3d2df23f32ca61f5814bbeeb73ab0d2a552faf"
+  },
+  "fork_version": "1.0.0"
+}

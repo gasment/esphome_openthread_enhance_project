@@ -1,0 +1,19 @@
+menu "Thread BR features"
+config THREAD_BR_WEB
+    bool "Include Thread BR web management"
+    default n
+    help
+        Enabled only when thread_br.web is explicitly configured.
+config THREAD_BR_COMMISSIONER_WEB
+    bool "Include Thread commissioner management resources"
+    depends on THREAD_BR_WEB
+    default n
+    help
+        Set automatically from thread_br.commissioner.enabled.
+config THREAD_BR_GATEWAY_WEB
+    bool "Include Thread gateway management resources"
+    depends on THREAD_BR_WEB
+    default n
+    help
+        Set automatically when thread_gateway and thread_br.web are configured.
+endmenu

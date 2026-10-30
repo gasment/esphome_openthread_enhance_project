@@ -1,0 +1,2 @@
+# Feature symbols live in the always-registered thread_br_rcp/Kconfig, so
+# no-Web builds can explicitly reset cached flags without loading this module.

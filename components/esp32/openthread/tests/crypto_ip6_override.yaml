@@ -1,0 +1,7 @@
+# User-provided capacity remains authoritative; configuration/codegen only.
+packages:
+  base: !include crypto.yaml
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_LWIP_IPV6_NUM_ADDRESSES: "12"

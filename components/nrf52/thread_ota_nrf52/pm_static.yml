@@ -1,0 +1,43 @@
+# nRF52840 internal flash, 1 MiB; preserve the board's 0xF8000 storage partition.
+mcuboot:
+  address: 0x0
+  end_address: 0x10000
+  region: flash_primary
+  size: 0x10000
+mcuboot_pad:
+  address: 0x10000
+  end_address: 0x10200
+  region: flash_primary
+  size: 0x200
+app:
+  address: 0x10200
+  end_address: 0xA0000
+  region: flash_primary
+  size: 0x8FE00
+mcuboot_primary:
+  address: 0x10000
+  end_address: 0xA0000
+  orig_span: &primary
+  - mcuboot_pad
+  - app
+  region: flash_primary
+  size: 0x90000
+  span: *primary
+mcuboot_primary_app:
+  address: 0x10200
+  end_address: 0xA0000
+  orig_span: &primary_app
+  - app
+  region: flash_primary
+  size: 0x8FE00
+  span: *primary_app
+mcuboot_secondary:
+  address: 0xA0000
+  end_address: 0xF8000
+  region: flash_primary
+  size: 0x58000
+settings_storage:
+  address: 0xF8000
+  end_address: 0x100000
+  region: flash_primary
+  size: 0x8000

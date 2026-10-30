@@ -1,0 +1,5 @@
+packages:
+  base: !include crypto.yaml
+openthread:
+  device_type: MTD
+  poll_period: 1s

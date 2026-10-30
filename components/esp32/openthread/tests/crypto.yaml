@@ -1,0 +1,18 @@
+# Dummy credentials; configuration/code-generation regression only.
+esphome:
+  name: openthread-crypto-check
+esp32:
+  variant: esp32h2
+  framework:
+    type: esp-idf
+external_components:
+  - source:
+      type: local
+      path: ../..
+    components: [openthread]
+network:
+  enable_ipv6: true
+openthread:
+  device_type: FTD
+  thread_network_config:
+    network_key: "00112233445566778899aabbccddeeff"

@@ -1,0 +1,12 @@
+{
+  "forked_from": "esphome_enhance_thread/components/thread_reed_transporter",
+  "fork_version": "1.0.0",
+  "esphome_baseline": "2026.9.1",
+  "runtime_dependency_on_original": false,
+  "sha256": {
+    "__init__.py": "e62d0a72daf79c5e4453efe45fcc3194ef450886d48f21188e38fb3bde21eccc",
+    "automation.h": "5d5194b44201a6dbc744212dfae722d45ea7339515259f47799ab733b11ffaa3",
+    "thread_reed_transporter.cpp": "71bb9ad51cc18b01606808161476b772ea7780e231ba435da935eeeae9f08a59",
+    "thread_reed_transporter.h": "a8c8cd5e9608b97879944d360bce0b9e8ab18c851fc82c84030255d1908049d4"
+  }
+}

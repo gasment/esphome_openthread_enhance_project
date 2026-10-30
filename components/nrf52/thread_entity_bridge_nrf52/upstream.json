@@ -1,0 +1,11 @@
+{
+  "forked_from": "esphome_enhance_thread/components/thread_entity_bridge",
+  "fork_version": "1.0.0",
+  "esphome_baseline": "2026.9.1",
+  "runtime_dependency_on_original": false,
+  "sha256": {
+    "__init__.py": "d4b610fb65ce2a8607579df359cc06127a1d5d147357328801a887484e867e0d",
+    "entity_bridge.cpp": "21c91d06004bd066079c3307c2bcc2a8e9eed60b7935f23b3828c4cc6593ebc4",
+    "entity_bridge.h": "521db7266048bd6876c3a0d52b1974618528121ac6556d1893252af609f3c141"
+  }
+}

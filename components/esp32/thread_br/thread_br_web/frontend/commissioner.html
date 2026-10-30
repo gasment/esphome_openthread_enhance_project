@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thread 配网</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/favicon.ico">
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+<main class="container">
+  <h1 class="page-title">Thread 配网</h1>
+  <p class="page-desc">发现节点并加入当前 Thread 网络</p>
+  <div class="commission-layout">
+  <section class="card commission-network">
+    <h2 class="card-header">当前网络（只读）</h2>
+    <p id="networkMatch" role="status">正在读取…</p>
+    <div id="networkConfig"></div>
+    <button id="showSecrets" class="btn btn-secondary btn-sm" type="button">显示网络凭据</button>
+  </section>
+  <section class="card commission-candidates">
+    <div class="card-header commission-heading">
+      <h2>待配网节点</h2>
+      <button id="clearCandidate" type="button" class="btn btn-secondary btn-sm" disabled>取消选择</button>
+    </div>
+    <div class="table-wrap">
+      <table class="commission-table">
+        <thead><tr><th scope="col">节点名称</th><th scope="col">设备标识</th><th scope="col">Thread</th><th scope="col">最近发现</th><th scope="col">操作</th></tr></thead>
+        <tbody id="candidateList"><tr><td colspan="5">正在读取…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="card commission-controls">
+    <h2 class="card-header">配网窗口</h2>
+    <p id="selectedCandidate" class="commission-selection" hidden></p>
+    <form id="commissionForm">
+      <div class="form-group"><label class="form-label" for="pskd">PSKd 配网码</label>
+        <input class="form-input" id="pskd" type="password" minlength="6" maxlength="32" autocomplete="off" required placeholder="例如 J01NME"></div>
+      <div class="form-group"><label class="form-label" for="eui64">工厂 EUI64（可选）</label>
+        <input class="form-input" id="eui64" maxlength="16" autocomplete="off" placeholder="16 位十六进制，可留空" title="填写出厂 EUI64，不能使用扫描地址或设备标识"></div>
+      <div class="form-group"><label class="form-label" for="timeout">窗口时长（秒）</label>
+        <input class="form-input" id="timeout" type="number" min="10" max="600" value="120" required></div>
+      <div class="commission-actions">
+      <button id="startCommission" type="submit" class="btn btn-primary" disabled>开始配网</button>
+      <button id="cancelCommission" type="button" class="btn btn-secondary" disabled>停止配网</button>
+      </div>
+    </form>
+    <p id="commissionState" class="commission-status" role="status" hidden></p>
+    <p id="commissionDetail" class="form-hint" hidden></p>
+  </section>
+  </div>
+</main>
+<script src="/static/api.js"></script>
+<script src="/static/commissioner.js"></script>
+</body>
+</html>
