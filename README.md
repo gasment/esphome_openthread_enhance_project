@@ -1,0 +1,2 @@
+# esphome_openthread_enhance_project
+一套ESPHome Openthread增强实现方案
