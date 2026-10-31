@@ -85,3 +85,16 @@ generated `sysbuild.conf` currently contains only the MCUboot enable switch,
 and its `Section` serializer cannot express Partition Manager `span` entries.
 It also raises MCUboot's image-sector limit to 160; the 576 KiB primary slot
 uses 144 flash sectors, exceeding MCUboot's default limit of 128.
+
+## Changelog
+
+### 2026-10-31
+
+- Resolve `pm_static.yml` from ESPHome's actually loaded `thread_ota_nrf52` module,
+  including Git external-component caches, instead of a fixed path relative to
+  the wrapper. The wrapper may reside alongside YAML files in a separate directory.
+- Log the selected static partition source when generating OTA build inputs.
+- Use `python esphome_nrf52.py run config.yaml` for this OTA configuration.
+  Plain `esphome run` bypasses the wrapper's compressed-image/sysbuild inputs;
+  a missing static layout may cause a smaller dynamic app partition and FLASH
+  overflow. This fix preserves the existing partition addresses and sizes.
