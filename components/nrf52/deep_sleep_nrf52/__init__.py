@@ -201,6 +201,10 @@ async def to_code(config):
         raise cv.Invalid("Another component supplies the deep_sleep compatibility header")
     zephyr_add_prj_conf("GPIO", True)
     zephyr_add_prj_conf("GPIO_NRFX_INTERRUPT", True)
+    # No component-owned periodic wakeup while waiting for GPIO/VBUS/deadline.
+    zephyr_add_prj_conf("TICKLESS_KERNEL", True)
+    zephyr_add_prj_conf("TIMEOUT_64BIT", True)
+    zephyr_add_prj_conf("ARM_ON_ENTER_CPU_IDLE_HOOK", True)
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     cg.add(var.set_wakeup_mode(config["wakeup_mode"]))

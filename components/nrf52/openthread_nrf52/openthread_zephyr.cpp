@@ -187,6 +187,11 @@ void OpenThreadComponent::sync_ip6_addresses_() {
   if (!lock) return;
   auto *context = openthread_get_default_context();
   auto *instance = lock.get_instance();
+#if CONFIG_OPENTHREAD_MTD
+  // Reuse the existing awake maintenance pass; do not add a sleep timer or
+  // wake the application solely to print supervision diagnostics.
+  this->log_supervision_failures_(instance);
+#endif
   if (context == nullptr || context->iface == nullptr || !otIp6IsEnabled(instance) ||
       otThreadGetDeviceRole(instance) < OT_DEVICE_ROLE_CHILD) return;
   auto *iface = context->iface;

@@ -1,4 +1,5 @@
 #include "deep_sleep_nrf52.h"
+#include "sleep_watchdog.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "esphome/core/wake.h"
@@ -391,12 +392,13 @@ void DeepSleepComponent::sleep_() {
   }
   const int64_t started = k_uptime_get();
   const int64_t deadline = sleep_duration_.has_value() ? started + *sleep_duration_ : INT64_MAX;
+  SleepWatchdogGuard sleep_watchdog;
+  if (!sleep_watchdog.begin()) { abort_(WATCHDOG_ERROR); return; }
   ESP_LOGD(TAG, "System ON sleep");
   WakeupCause cause = EXTERNAL;
   while (true) {
-    arch_feed_wdt();
     const auto flags = atomic_get(&wake_flags_);
-    if (flags & GPIO_CONFIG_ERROR) { abort_(GPIO_ERROR); return; }
+    if (flags & GPIO_CONFIG_ERROR) { sleep_watchdog.end(); abort_(GPIO_ERROR); return; }
     if (flags & GPIO) { cause = GPIO; break; }
     if (flags & VBUS) { cause = VBUS; break; }
     if (flags & EXTERNAL) { cause = EXTERNAL; break; }
@@ -404,9 +406,12 @@ void DeepSleepComponent::sleep_() {
     if (esphome::wake_request_take()) { cause = EXTERNAL; break; }
     const int64_t remaining = deadline - k_uptime_get();
     if (remaining <= 0) { cause = TIMER; break; }
-    // OT threads keep running; feed WDT even if the radio thread is busy.
-    esphome::internal::wakeable_delay(static_cast<uint32_t>(std::min<int64_t>(remaining, 1000)));
+    // Wait for an event or the real deadline, not a periodic watchdog tick.
+    // UINT32_MAX is the core's K_FOREVER sentinel. Configured durations are
+    // bounded to UINT32_MAX - 1; Zephyr's 64-bit timeout handles long waits.
+    esphome::internal::wakeable_delay(sleep_duration_.has_value() ? static_cast<uint32_t>(remaining) : UINT32_MAX);
   }
+  sleep_watchdog.end();
   // Choose and preserve the selected detector without a gap in edge capture.
   const auto key = irq_lock();
   const auto final_flags = atomic_get(&wake_flags_);
@@ -474,7 +479,8 @@ void DeepSleepComponent::on_shutdown() {
 
 void DeepSleepComponent::dump_config() {
   peripheral_mgr_.dump_config();
-  ESP_LOGCONFIG(TAG, "nRF52 System ON sleep (no teardown, Thread remains running)");
+  ESP_LOGCONFIG(TAG, "nRF52 System ON sleep (event-driven wait; Thread remains schedulable)");
+  ESP_LOGCONFIG(TAG, "  Watchdog: pause in CPU sleep, feed at idle boundaries");
   ESP_LOGCONFIG(TAG, "  GPIO group mode: %u", unsigned(wakeup_mode_));
   if (run_duration_) ESP_LOGCONFIG(TAG, "  Run duration: %" PRIu32 " ms", *run_duration_);
   if (sleep_duration_) ESP_LOGCONFIG(TAG, "  Sleep duration: %" PRIu32 " ms", *sleep_duration_);
