@@ -67,6 +67,11 @@ class OpenThreadComponent final : public Component {
   bool set_poll_period(uint32_t poll_period);
   uint32_t get_poll_period() const { return this->poll_period_; }
   void set_child_timeout(uint32_t seconds) { this->child_timeout_ = seconds; }
+  // Zero check timeout selects automatic adaptation; never passed to OT.
+  void set_child_supervision(uint16_t interval, uint16_t check_timeout) {
+    this->supervision_interval_ = interval;
+    this->supervision_timeout_ = check_timeout;
+  }
 #endif
   void set_output_power(int8_t output_power) { this->output_power_ = output_power; }
   void set_connected(bool connected) { this->connected_ = connected; }
@@ -96,6 +101,10 @@ class OpenThreadComponent final : public Component {
    * ot_main() runs on the OpenThread task itself and must not acquire the lock.
    */
   bool apply_linkmode_(otInstance *instance);
+#if CONFIG_OPENTHREAD_MTD
+  bool supervision_timeout_for_poll_(uint32_t period, uint16_t &timeout) const;
+  void log_supervision_failures_(otInstance *instance);
+#endif
   void log_network_diagnostics_(otInstance *instance);
   void sync_ip6_addresses_();
 
@@ -109,6 +118,7 @@ class OpenThreadComponent final : public Component {
 #if CONFIG_OPENTHREAD_MTD
   uint32_t poll_period_{0};
   std::optional<uint32_t> child_timeout_{};
+  uint16_t supervision_interval_{129}, supervision_timeout_{0}, supervision_failures_{0};
 #endif
   std::optional<int8_t> output_power_{};
   std::atomic<bool> lock_initialized_{false};

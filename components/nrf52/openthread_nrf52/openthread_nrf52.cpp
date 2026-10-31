@@ -3,6 +3,7 @@
 #include "openthread_nrf52.h"
 
 #include <openthread/cli.h>
+#include <openthread/child_supervision.h>
 #include <openthread/instance.h>
 #include <openthread/ip6.h>
 #include <openthread/logging.h>
@@ -10,6 +11,7 @@
 #include <openthread/tasklet.h>
 
 #include <cstring>
+#include <algorithm>
 #include <utility>
 
 #include "esphome/core/application.h"
@@ -21,13 +23,35 @@ static const char *const TAG = "openthread_nrf52";
 namespace esphome::openthread_nrf52 {
 
 #if CONFIG_OPENTHREAD_MTD
+bool OpenThreadComponent::supervision_timeout_for_poll_(uint32_t period, uint16_t &timeout) const {
+  const uint32_t minimum = uint32_t(this->supervision_interval_) + (period + 999) / 1000;
+  uint32_t selected = this->supervision_timeout_;
+  if (selected == 0) selected = std::max<uint32_t>(190, minimum + 30);
+  if (selected <= minimum || selected > UINT16_MAX) return false;
+  timeout = static_cast<uint16_t>(selected);
+  return true;
+}
+
 bool OpenThreadComponent::set_poll_period(uint32_t period) {
   if (period != 0 && (period < 10 || period > 0x3FFFFFF)) {
     ESP_LOGW(TAG, "Invalid poll_period: %" PRIu32 "ms; previous configuration retained", period);
     return false;
   }
+  uint16_t timeout;
+  if (!this->supervision_timeout_for_poll_(period, timeout)) {
+    ESP_LOGW(TAG, "Poll period incompatible with Child Supervision timeout; previous policy retained");
+    return false;
+  }
   this->poll_period_ = period;
   return true;
+}
+
+void OpenThreadComponent::log_supervision_failures_(otInstance *instance) {
+  const auto count = otChildSupervisionGetCheckFailureCounter(instance);
+  if (count == this->supervision_failures_) return;
+  ESP_LOGW(TAG, "Child Supervision checks timed out: +%u (total=%u); MLE parent validation requested",
+           unsigned(static_cast<uint16_t>(count - this->supervision_failures_)), unsigned(count));
+  this->supervision_failures_ = count;
 }
 #endif
 
@@ -85,6 +109,11 @@ void OpenThreadComponent::dump_config() {
   auto lock = InstanceLock::try_acquire(10);
   if (lock) {
     ESP_LOGCONFIG(TAG, "  Effective Child Timeout: %" PRIu32 "s", otThreadGetChildTimeout(lock.get_instance()));
+    ESP_LOGCONFIG(TAG, "  Child Supervision: interval=%us check_timeout=%us (%s), failures=%u",
+                  unsigned(otChildSupervisionGetInterval(lock.get_instance())),
+                  unsigned(otChildSupervisionGetCheckTimeout(lock.get_instance())),
+                  this->supervision_timeout_ == 0 ? "automatic" : "explicit",
+                  unsigned(otChildSupervisionGetCheckFailureCounter(lock.get_instance())));
     if (this->poll_period_ > 0)
       ESP_LOGCONFIG(TAG, "  Effective Keep-alive Poll Period: %" PRIu32 "ms", otLinkGetPollPeriod(lock.get_instance()));
   }
@@ -428,6 +457,13 @@ void OpenThreadComponent::on_factory_reset(std::function<void()> callback) {
 }
 
 bool OpenThreadComponent::apply_linkmode_(otInstance *instance) {
+#if CONFIG_OPENTHREAD_MTD
+  uint16_t supervision_timeout;
+  if (!this->supervision_timeout_for_poll_(this->poll_period_, supervision_timeout)) {
+    ESP_LOGE(TAG, "Invalid Child Supervision policy; link mode retained");
+    return false;
+  }
+#endif
   otLinkModeConfig link_mode_config{};
 #if CONFIG_OPENTHREAD_FTD
   link_mode_config.mRxOnWhenIdle = true;
@@ -448,6 +484,8 @@ bool OpenThreadComponent::apply_linkmode_(otInstance *instance) {
     ESP_LOGE(TAG, "Failed to set poll period");
     return false;
   }
+  otChildSupervisionSetInterval(instance, this->supervision_interval_);
+  otChildSupervisionSetCheckTimeout(instance, supervision_timeout);
   ESP_LOGD(TAG, "Polling policy: %s", this->poll_period_ > 0 ? "periodic SED" : "MED (continuous reception)");
 #endif
 #ifdef ESPHOME_LOG_HAS_DEBUG  // Fetch link mode from OT only when DEBUG

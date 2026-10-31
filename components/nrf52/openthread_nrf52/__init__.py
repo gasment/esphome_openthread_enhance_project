@@ -45,15 +45,44 @@ def child_timeout(value):
     return period
 
 
+def supervision_duration(value):
+    period = cv.positive_time_period_milliseconds(value)
+    if period.total_milliseconds % 1000 or not 1 <= period.total_seconds <= 65535:
+        raise cv.Invalid("Child Supervision durations must be whole seconds between 1s and 65535s")
+    return period
+
+
+CHILD_SUPERVISION_SCHEMA = cv.Schema({
+    cv.Optional("interval", default="129s"): supervision_duration,
+    cv.Optional("check_timeout"): supervision_duration,
+})
+
+
+def validate_supervision(config):
+    supervision = config.get("child_supervision", {})
+    interval = supervision.get("interval", cv.TimePeriodSeconds(seconds=129)).total_seconds
+    poll_ms = config.get(CONF_POLL_PERIOD, cv.TimePeriodMilliseconds(milliseconds=0)).total_milliseconds
+    minimum = interval + (poll_ms + 999) // 1000
+    if "check_timeout" in supervision:
+        if supervision["check_timeout"].total_seconds <= minimum:
+            raise cv.Invalid("child_supervision.check_timeout must exceed interval + poll_period",
+                             path=["child_supervision", "check_timeout"])
+    elif max(190, minimum + 30) > 65535:
+        raise cv.Invalid("Automatic Child Supervision timeout exceeds 65535s; shorten poll_period or interval")
+    return config
+
+
 def validate(config):
     if not CORE.is_nrf52 or not CORE.using_zephyr:
         raise cv.Invalid("openthread_nrf52 requires nRF52 with Zephyr")
     if CONF_USE_ADDRESS not in config:
         config[CONF_USE_ADDRESS] = f"{CORE.name}.local"
     if config[CONF_DEVICE_TYPE] != "MTD":
-        for key in (CONF_POLL_PERIOD, CONF_CHILD_TIMEOUT):
+        for key in (CONF_POLL_PERIOD, CONF_CHILD_TIMEOUT, "child_supervision"):
             if key in config:
                 raise cv.Invalid(f"{key} is only allowed with device_type: MTD", path=[key])
+    else:
+        validate_supervision(config)
     return config
 
 
@@ -86,6 +115,7 @@ CONFIG_SCHEMA = cv.All(
         cv.Optional(CONF_OUTPUT_POWER): cv.All(cv.decibel, cv.int_range(min=-40, max=8)),
         cv.Optional(CONF_POLL_PERIOD): poll_period,
         cv.Optional(CONF_CHILD_TIMEOUT): child_timeout,
+        cv.Optional("child_supervision"): CHILD_SUPERVISION_SCHEMA,
     }).extend(cv.COMPONENT_SCHEMA),
     cv.has_exactly_one_key("thread_network_config", "joiner"),
     cv.require_esphome_version(2026, 9, 1),
@@ -161,6 +191,11 @@ async def to_code(config):
         zephyr_add_prj_conf("MBEDTLS_HEAP_SIZE", 16384)
         zephyr_add_prj_conf("OPENTHREAD_CUSTOM_PARAMETERS", "OPENTHREAD_CONFIG_JOINER_ADV_EXPERIMENTAL_ENABLE=1")
     add_use_address(ot, config[CONF_USE_ADDRESS])
+    if config[CONF_DEVICE_TYPE] == "MTD":
+        supervision = config.get("child_supervision", {})
+        interval = supervision.get("interval", cv.TimePeriodSeconds(seconds=129)).total_seconds
+        timeout = supervision["check_timeout"].total_seconds if "check_timeout" in supervision else 0
+        cg.add(ot.set_child_supervision(interval, timeout))
     if config[CONF_DEVICE_TYPE] == "MTD" and CONF_POLL_PERIOD in config:
         cg.add(ot.set_poll_period(config[CONF_POLL_PERIOD]))
     if config[CONF_DEVICE_TYPE] == "MTD" and CONF_CHILD_TIMEOUT in config:

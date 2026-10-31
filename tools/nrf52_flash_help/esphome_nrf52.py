@@ -41,10 +41,20 @@ SB_CONFIG_MCUBOOT_UPDATEABLE_IMAGES=1
 SB_CONFIG_MCUBOOT_COMPRESSED_IMAGE_SUPPORT=y
 """
 _MCUBOOT_CONF = "CONFIG_BOOT_MAX_IMG_SECTORS=160\n"
-_PARTITION_SOURCE = (
-    Path(__file__).resolve().parent.parent
-    / "external_components/nrf52/thread_ota_nrf52/pm_static.yml"
-)
+
+def _partition_source() -> Path:
+    """Resolve through ESPHome's loader, including Git external-component caches."""
+    from esphome.core import EsphomeError
+    from esphome.loader import get_component
+
+    component = get_component("thread_ota_nrf52", exception=True)
+    module_file = getattr(component.module, "__file__", None) if component is not None else None
+    if module_file is None:
+        raise EsphomeError("Cannot locate the loaded thread_ota_nrf52 component")
+    source = Path(module_file).resolve().with_name("pm_static.yml")
+    if not source.is_file():
+        raise EsphomeError(f"Loaded thread_ota_nrf52 component is missing its partition file: {source}")
+    return source
 
 
 def _write_if_changed(path: Path, content: str) -> bool:
@@ -68,12 +78,17 @@ def thread_ota_build_hook():
         original()
         if "thread_ota_nrf52" not in CORE.loaded_integrations:
             return
+        # Resolve/read before changing build inputs so a missing component
+        # file cannot leave a partially configured OTA build behind.
+        partition_source = _partition_source()
+        partition_text = partition_source.read_text(encoding="utf-8")
         build = CORE.relative_build_path("zephyr")
         changed = _write_if_changed(build / "sysbuild.conf", _SYSBUILD_CONF)
         changed |= _write_if_changed(
-            build / "pm_static.yml", _PARTITION_SOURCE.read_text(encoding="utf-8")
+            build / "pm_static.yml", partition_text
         )
         changed |= _write_if_changed(build / "sysbuild/mcuboot.conf", _MCUBOOT_CONF)
+        _LOGGER.info("Thread OTA static layout: %s", partition_source)
         if changed:
             clean_cmake_cache()
 

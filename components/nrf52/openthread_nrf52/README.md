@@ -128,8 +128,42 @@ OTA 维护窗口应设为 `0s` 切换 MED，并确保 MCU 主循环继续运行�
 SED 周期。若切换命令来自网络，在设备仍为长周期 SED 时也需等待下行被轮询取回。
 该模式切换只解决 Thread 接收行为，不补齐 Zephyr 的 ESPHome OTA 后端。
 
+### Child Supervision
+
+MTD 自动启用并适配监督参数，也可显式配置：
+
+```yaml
+openthread_nrf52:
+  # 其余必需配置照旧
+  device_type: MTD
+  poll_period: 25min
+  child_timeout: 1h
+  child_supervision:
+    interval: 2min
+    check_timeout: 30min
+```
+
+- `interval` 默认 `129s`，告知父节点期望的监督间隔。父节点没有其他下行时排队监督消息，
+  等待 SED Poll 领取；不会因此每隔该时间直接唤醒 SED，也不会不断堆积监督包。
+- `check_timeout` 省略时自动取 `max(190s, ceil(poll_period / 1s) + interval + 30s)`。
+  因此默认间隔配合 `25min` Poll 时为 `1659s`（27 分 39 秒）。
+- 两个显式时长均为 `1..65535` 的整数秒，不接受零；显式检查超时必须大于
+  `interval + ceil(poll_period / 1s)`。自动计算结果超出 65535 秒时也拒绝配置，不能溢出后关闭监督。
+- 运行时 `set_poll_period` 同步应用参数；自动超时随周期变化，显式超时保持不变。
+  动态周期与监督参数不兼容时打印警告、保留原策略。MED 模式不执行 SED 监督检查，
+  返回 SED 后由协议栈恢复；自动参数在 MED 下仍保留至少 190 秒检查超时。
+- 监督计时以父节点的有效安全数据帧刷新，MAC ACK 不算。超时先发送 MLE Child Update Request，
+  后续失败由原生 OT 恢复附着，不自行强制重启或直接伪造离线状态。
+- `child_timeout` 是父节点保留 Child Table 条目的时间，独立于本地监督检查。
+  `child_supervision` 配置仅允许 MTD，不改变 FTD 父节点已有的监督支持。
+
+CONFIG 日志打印实际 interval/check_timeout、自动或显式策略及失败计数；计数变化在现有的
+主循环维护阶段汇总输出 WARN，不增加休眠定时器、不为打印日志唤醒应用。应用长期休眠时，
+该诊断可延迟到应用下次恢复，OT 本身的监督与恢复不依赖这条日志。
+验证：`python tools/validate_child_supervision_nrf52.py`，仅校验配置和内存代码生成，不编译固件。
+
 手动轮询源码补丁、CMake 钩子和 SDK 源码校验限制均已移除。组件直接使用原生 OT
-调度，不再禁用或重写 Child Supervision，也不修改已安装 ESPHome 或共享 SDK。
+调度，通过公开 API 设置 Child Supervision 参数，不重写其恢复机制，也不修改已安装 ESPHome 或共享 SDK。
 
 nRF52840 发射功率上限为 8dBm，不能沿用 ESP32 的 10dBm/20dBm 配置。
 配置接受 -40..8dBm 整数，实际射频驱动不接受的值会在初始化时报错。
@@ -265,3 +299,15 @@ thread_manual_keep_alive 脚本供 SED 时调用，未自动创建定时任务�
 包括两种 YAML 写法、带参数自动化、MED/SED 切换、FTD 拒绝及超时边界。
 同时检查未注册任何手动轮询构建补丁、未替换原生 CMake 入口。
 未执行固件编译或硬件保活验证。
+
+## 更新日志
+
+### 2026-10-31
+
+- 新增 MTD `child_supervision` 配置，通过 OpenThread 公开 API 设置监督参数，不修改 SDK 或 FTD 父节点逻辑。
+- `interval` 默认 `129s`；省略 `check_timeout` 时，自动取 `max(190s, ceil(poll_period / 1s) + interval + 30s)`。显式时长限整数秒 `1..65535s`，检查超时必须大于监督间隔加轮询周期；自动结果超限时拒绝配置。
+- 运行时切换 Poll 周期同步应用监督策略；自动检查超时随周期调整，显式值保持不变，不兼容的动态周期会被拒绝。
+- CONFIG 日志增加实际监督参数及失败计数；失败变化复用主循环维护阶段汇总 WARN，不新增休眠唤醒定时器。
+- 明确保活边界：System ON 应用休眠不停止 OT 调度；Poll 刷新父节点的 Child Timeout，父节点有效安全下行刷新 SED 的监督计时，单纯 MAC ACK 不算监督确认。监督超时先启动 MLE 验证，后续失败再由 OT 恢复附着。
+- 本轮讨论的运行策略为 `poll_period: 25min`、`child_timeout: 1h`、监督 `interval: 2min`、`check_timeout: 35min`，周期上报 `30min`。这是参数选择记录，不代表组件默认值或已经改写项目 YAML；GPIO 通信及模式切换可能改变相对时序，不保证每个检查窗口内都有固定两次机会。
+- 已通过 Child Supervision 配置边界、运行时动作内存代码生成，以及休眠、SED 发送相关回归验证；未进行固件编译或上板验证。

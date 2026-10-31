@@ -5,7 +5,7 @@ from esphome import automation, pins
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
-from esphome.components.zephyr import add_extra_build_file, zephyr_add_prj_conf
+from esphome.components.zephyr import add_extra_build_file, zephyr_add_kconfig, zephyr_add_prj_conf
 from esphome.const import CONF_ID, CONF_PIN, CONF_NUMBER, CONF_TRIGGER_ID
 from esphome.core import CORE
 
@@ -201,6 +201,17 @@ async def to_code(config):
         raise cv.Invalid("Another component supplies the deep_sleep compatibility header")
     zephyr_add_prj_conf("GPIO", True)
     zephyr_add_prj_conf("GPIO_NRFX_INTERRUPT", True)
+    # No component-owned periodic wakeup while waiting for GPIO/VBUS/deadline.
+    zephyr_add_prj_conf("TICKLESS_KERNEL", True)
+    zephyr_add_prj_conf("TIMEOUT_64BIT", True)
+    # ARM_ON_ENTER_CPU_IDLE_HOOK has no prompt and cannot be assigned in
+    # prj.conf. Select it through an application Kconfig symbol instead.
+    zephyr_add_kconfig("""
+        config ESPHOME_DEEP_SLEEP_NRF52_IDLE_WATCHDOG
+            bool
+            default y
+            select ARM_ON_ENTER_CPU_IDLE_HOOK
+    """)
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     cg.add(var.set_wakeup_mode(config["wakeup_mode"]))

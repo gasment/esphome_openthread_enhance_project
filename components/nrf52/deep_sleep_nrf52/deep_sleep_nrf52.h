@@ -21,7 +21,7 @@ namespace esphome::deep_sleep_nrf52 {
 enum WakeupPinMode : uint8_t { KEEP_AWAKE, IGNORE, INVERT_WAKEUP };
 enum WakeupMode : uint8_t { WAKE_ANY, WAKE_ANY_LOW, WAKE_ANY_HIGH, WAKE_ALL_LOW, WAKE_ALL_HIGH };
 enum WakeupCause : uint8_t { TIMER = 1, GPIO = 2, EXTERNAL = 4, VBUS = 8 };
-enum AbortReason : uint8_t { CANCELLED, PREPARE_TIMEOUT, GPIO_ERROR, PERIPHERAL_ERROR };
+enum AbortReason : uint8_t { CANCELLED, PREPARE_TIMEOUT, GPIO_ERROR, PERIPHERAL_ERROR, WATCHDOG_ERROR };
 enum class Phase : uint8_t { AWAKE, WAITING, PREPARING, SLEEPING };
 class PinEventTrigger;
 

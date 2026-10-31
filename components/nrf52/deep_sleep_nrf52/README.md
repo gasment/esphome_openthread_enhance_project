@@ -40,7 +40,7 @@ deep_sleep_nrf52:
 ```
 
 - `run_duration` 可省略：此时仅显式 `enter` 请求待机。计时从组件 setup、每次唤醒或取消待机后开始。
-- `sleep_duration` 可省略：等待 GPIO 或其他线程唤醒，仍周期喂狗。
+- `sleep_duration` 可省略：无限期等待 GPIO 或其他线程通知，不设置周期喂狗唤醒。
 - 至少配置时长或一个唤醒引脚。时长为 1..4294967294 ms。
 - 多引脚使用 `wakeup_pins: [{pin: ..., wakeup_pin_mode: KEEP_AWAKE}, ...]`，
   与单引脚形式互斥。默认任意一个引脚即可唤醒，也支持下述组级组合电平判断。
@@ -349,7 +349,7 @@ GPIO 独立唤醒后再通信；UART RX 本身在暂停期间无法接收或唤�
 验证：`python tools/validate_peripheral_auto_mgr.py`，覆盖默认值、布尔/展开形式、
 强制/关闭配置及互斥拒绝、旧 UART 关联字段拒绝、PM 配置和当前项目内存代码生成。
 没有执行固件编译、C++ 运行时测试或硬件验证。
-可加 `--sdk-root /home/esphome/sdk-nrf/frameworks/v2.9.2`，静态核对
+可加 `--sdk-root /home/gasment/esphome/sdk-nrf/frameworks/v2.9.2`，静态核对
 兜底使用的 HAL 符号及 nRF52840 寄存器字段；该检查仍不执行 C++。
 
 YAML 动作只保留 `enter` 和 `prevent`：
@@ -384,7 +384,8 @@ YAML 动作只保留 `enter` 和 `prevent`：
 冷启动不触发。核心其他组件的线程安全主循环通知也会提前结束本轮，记为 EXTERNAL，
 以便处理它们的待办事件。仅硬件中断而没有主循环通知不必结束本轮。
 
-`on_sleep_aborted` 参数：`CANCELLED`、`PREPARE_TIMEOUT`、`GPIO_ERROR`（也包含 VBUS 事件配置错误）。
+`on_sleep_aborted` 参数：`CANCELLED`、`PREPARE_TIMEOUT`、`GPIO_ERROR`（也包含 VBUS 事件配置错误）、
+`PERIPHERAL_ERROR`、`WATCHDOG_ERROR`（硬件看门狗未暂停于 CPU 睡眠，不能安全进入长期等待）。
 GPIO 初始化失败会将组件标记 failed，日志报错；不会进入待机。
 
 ## 后续 SED/P2P 接入接口
@@ -414,9 +415,19 @@ sleep->add_sleep_guard([this]() { return this->ready_for_sleep(); });
 `deep_sleep::global_has_deep_sleep`，供 API 查询。官方组件与本 fork 互斥，不加载其源文件。
 不启用 POWEROFF、保留 RAM 或 preferences。API、GPIO、自动化代码生成已单独覆盖。
 
-待机使用核心 wakeable semaphore，最长每 1 秒醒来喂一次 watchdog。
-使用 64 位绝对截止时间，中途通知或虚假唤醒不会累计扣错时间。
-OpenThread 等 Zephyr 线程继续运行，ESPHome scheduler/主循环不运行；因此普通 `delay`
+待机使用核心 wakeable semaphore，直接等待真实休眠截止时间；无时长时使用 `K_FOREVER`。
+GPIO SENSE、VBUS 和显式 `wake()` 经中断/线程通知立即结束等待，没有固定的每秒检查或喂狗定时器。
+启用 Zephyr tickless 和 64 位 timeout，使用 64 位绝对截止时间；中途通知或虚假唤醒不会重置截止时间。
+
+看门狗在 CPU 的 WFI/WFE 睡眠期间暂停。组件在阻塞等待期间使用 Zephyr 的
+`z_arm_on_enter_cpu_idle()` 钩子：CPU 因真实任务短暂工作并自然返回空闲时喂狗，
+不为喂狗专门唤醒 CPU。进入和退出等待也各喂一次，退出后恢复通常的主循环喂狗行为。
+若其他线程持续占用 CPU、不再返回空闲且未喂狗，硬件看门狗仍可触发复位。
+入睡前读取硬件 CONFIG 确认 pause-in-sleep 已生效；若看门狗正在运行但未暂停于睡眠，
+拒绝入睡并以 `WATCHDOG_ERROR` 回调，不尝试修改已经启动的看门狗配置。
+组件提供此 ARM idle 钩子的实现，不能与其他同名自定义钩子重复定义。
+
+OpenThread 等 Zephyr 线程仍可按需调度，ESPHome scheduler/主循环不运行；因此普通 `delay`
 和传感器轮询不会在休眠中继续执行。恢复后到期任务按核心调度器规则处理。
 USB 日志、外设供电、其他线程和协议轮询仍影响实际电流；不承诺数据手册的裸芯片静态电流。
 
@@ -424,7 +435,8 @@ USB 日志、外设供电、其他线程和协议轮询仍影响实际电流；�
 
 当前工作区的动作精简回归：`python tools/validate_sleep_nrf52.py`（项目根目录）。
 覆盖 enter 时长及 lambda、prevent ID/布尔/显式/lambda 写法、三个旧动作的拒绝，
-并对当前完整项目做内存代码生成。未执行 C++ 运行时测试、固件编译或硬件验证。
+以及无限期、最短/最长休眠时长与事件等待所需 Kconfig，并对当前完整项目做内存代码生成。
+未执行 C++ 运行时测试、固件编译或硬件验证。
 
 `python tests/validate_sleep.py`：配置拒绝、单/多引脚、三种模式、共享输入、全部动作/条件、
 逐源自动化、独立 GPIO 触发事件及参数约束、非 lambda 事件筛选、唤醒与识别极性独立、旧 GPIO 回调迁移、VBUS 插拔与混用、
@@ -435,3 +447,22 @@ GPIO 组级模式及互斥校验、API 兼容和 Thread MTD 共存，内存生�
 交付时尚未编译或实机验证。用户编译后建议验证：定时/GPIO 唤醒、长按不重复唤醒、
 INVERT_WAKEUP 释放唤醒、准备自动化延时和超时恢复、多个锁互不影响、Thread 附着是否保持、
 连续休眠唤醒的看门狗稳定性，以及电池供电下的实际电流。
+
+## 更新日志
+
+### 2026-10-31
+
+- 取消 System ON 等待循环固定每秒返回检查、喂狗的行为；有时长时直接等待实际截止时间，未配置时使用 `K_FOREVER`，GPIO SENSE、VBUS 或线程通知可以提前结束等待。
+- 启用 Zephyr tickless 和 64 位 timeout；继续按绝对截止时间计算剩余时长，避免中途通知导致休眠计时被重置。
+- 看门狗改为在阻塞休眠期间由 `z_arm_on_enter_cpu_idle()` 钩子在 CPU 自然返回空闲前喂狗，进入和退出等待也各喂一次，不创建周期喂狗定时器；CPU 睡眠期间依赖硬件 pause-in-sleep。
+- 新增入睡前的看门狗硬件配置检查；已运行的看门狗若未暂停于 CPU 睡眠，则拒绝入睡、恢复外设并报告 `WATCHDOG_ERROR`。退出休眠后恢复常规主循环喂狗行为。
+- 明确功耗边界：GPIO 唤醒由硬件中断通知，不是软件定时采样；OT 等独立线程仍可按需调度，其短暂 CPU 活动不等于退出应用休眠或触发 `on_wake`。
+- 修正项目 P1.11 的 `allow_other_uses` 配置层级；修复回归工具注入测试脚本时覆盖包内原有脚本的问题。
+- 已通过完整项目配置与内存代码生成、无限期及最短/最长休眠时长、动作兼容和所需 Kconfig 检查；未进行固件编译、硬件看门狗稳定性或电流验证。
+
+### 2026-10-31 — Kconfig 配置修复
+
+- 修复将无 prompt 的内部符号 `ARM_ON_ENTER_CPU_IDLE_HOOK` 直接写入 `prj.conf` 导致 NCS 2.9.2 配置阶段中止的问题。
+- 改为在应用 Kconfig 中增加内部选项 `ESPHOME_DEEP_SLEEP_NRF52_IDLE_WATCHDOG`，以 `default y` 和 `select ARM_ON_ENTER_CPU_IDLE_HOOK` 启用钩子；不改变事件等待或空闲喂狗行为。
+- 回归检查增加禁止在 `prj.conf` 中直接赋值该隐藏符号、检查应用 Kconfig 的选择关系。
+- 已使用 NCS 2.9.2 对应的 Kconfig 解析器与真实符号定义，在临时最小配置中确认钩子经 `select` 生效且无警告；配置和内存代码生成回归通过，未运行完整固件编译。
