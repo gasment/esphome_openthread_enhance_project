@@ -459,3 +459,10 @@ INVERT_WAKEUP 释放唤醒、准备自动化延时和超时恢复、多个锁互
 - 明确功耗边界：GPIO 唤醒由硬件中断通知，不是软件定时采样；OT 等独立线程仍可按需调度，其短暂 CPU 活动不等于退出应用休眠或触发 `on_wake`。
 - 修正项目 P1.11 的 `allow_other_uses` 配置层级；修复回归工具注入测试脚本时覆盖包内原有脚本的问题。
 - 已通过完整项目配置与内存代码生成、无限期及最短/最长休眠时长、动作兼容和所需 Kconfig 检查；未进行固件编译、硬件看门狗稳定性或电流验证。
+
+### 2026-10-31 — Kconfig 配置修复
+
+- 修复将无 prompt 的内部符号 `ARM_ON_ENTER_CPU_IDLE_HOOK` 直接写入 `prj.conf` 导致 NCS 2.9.2 配置阶段中止的问题。
+- 改为在应用 Kconfig 中增加内部选项 `ESPHOME_DEEP_SLEEP_NRF52_IDLE_WATCHDOG`，以 `default y` 和 `select ARM_ON_ENTER_CPU_IDLE_HOOK` 启用钩子；不改变事件等待或空闲喂狗行为。
+- 回归检查增加禁止在 `prj.conf` 中直接赋值该隐藏符号、检查应用 Kconfig 的选择关系。
+- 已使用 NCS 2.9.2 对应的 Kconfig 解析器与真实符号定义，在临时最小配置中确认钩子经 `select` 生效且无警告；配置和内存代码生成回归通过，未运行完整固件编译。
