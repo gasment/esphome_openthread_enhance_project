@@ -59,7 +59,7 @@
             </div>
         </div>
         <div class="card">
-            <div class="card-header">RCP（无线协处理器）</div>
+            <div class="card-header" id="ab-radio-title">RCP（无线协处理器）</div>
             <div class="info-row">
                 <span class="info-label">版本</span>
                 <span class="info-value" id="ab-rcp">-</span>
@@ -114,7 +114,8 @@ function renderAbout(data) {
     document.getElementById('ab-idf').textContent = r['IDF:Version'] || '-';
     document.getElementById('ab-ot').textContent = r['OpenThread:Version'] || '-';
     document.getElementById('ab-otapi').textContent = r['OpenThread:Version API'] || '-';
-    document.getElementById('ab-rcp').textContent = r['RCP:Version'] || '-';
+    document.getElementById('ab-radio-title').textContent = r['Radio:Mode'] === 'native' ? '本地 Thread 射频' : 'RCP（无线协处理器）';
+    document.getElementById('ab-rcp').textContent = r['Radio:Version'] || r['RCP:Version'] || '-';
     document.getElementById('ab-eui').textContent = r['RCP:EUI64'] || '-';
 }
 renderAbout(getCached('/get_properties'));

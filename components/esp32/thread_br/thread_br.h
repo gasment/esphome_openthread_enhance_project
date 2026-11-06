@@ -3,6 +3,7 @@
 #include <atomic>
 #include <string>
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 #include "esphome/core/optional.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
@@ -22,6 +23,10 @@ namespace esphome::thread_br {
 class ThreadBorderRouter : public PollingComponent {
  public:
   bool is_thread_ready() const { return state_ == State::READY; }
+#ifdef USE_THREAD_BR_NATIVE
+  bool is_radio_healthy() const { return state_ == State::READY && healthy_; }
+  uint32_t get_radio_activity_sequence() const { return radio_activity_sequence_.load(); }
+#endif
 #ifdef USE_THREAD_GATEWAY
   void set_thread_gateway(thread_gateway::ThreadGateway *thread_gateway) { thread_gateway_ = thread_gateway; }
 #endif
@@ -31,13 +36,16 @@ class ThreadBorderRouter : public PollingComponent {
   void dump_config() override;
   void on_shutdown() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
+#ifdef USE_THREAD_BR_UART_RCP
   void set_uart_pins(int tx, int rx) { tx_ = tx; rx_ = rx; }
   void set_rcp_pins(int reset, int boot) { reset_ = reset; boot_ = boot; }
   void set_coexistence_pins(int request, int priority, int grant, int tx_line) {
     request_ = request; priority_ = priority; grant_ = grant; tx_line_ = tx_line;
   }
+#endif
   void set_force_dataset(bool force) { force_dataset_ = force; }
   void set_omr_prefix(const std::string &prefix) { omr_prefix_ = prefix; }
+#ifdef USE_THREAD_BR_UART_RCP
   void set_rcp_activity_led_enabled(bool enabled) {
     queue_rcp_led_action_(1, enabled);
   }
@@ -46,6 +54,7 @@ class ThreadBorderRouter : public PollingComponent {
   }
   optional<bool> get_rcp_activity_led_enabled() const { return rcp_led_state_(1); }
   optional<bool> get_rcp_connection_led_enabled() const { return rcp_led_state_(2); }
+#endif
 #ifdef CONFIG_THREAD_BR_WEB
   void set_web(uint16_t port, const std::string &auth, bool psram) { web_port_ = port; auth_ = auth; use_psram_ = psram; }
   void set_home_assistant(const std::string &url, const std::string &token) { ha_url_ = url; ha_token_ = token; }
@@ -54,6 +63,7 @@ class ThreadBorderRouter : public PollingComponent {
   void set_thread_attached(binary_sensor::BinarySensor *s) { thread_attached_ = s; }
   void set_thread_role(text_sensor::TextSensor *s) { thread_role_ = s; }
   void set_rcp_version(text_sensor::TextSensor *s) { rcp_version_ = s; }
+  void set_radio_version(text_sensor::TextSensor *s) { radio_version_ = s; }
   void set_rloc16(text_sensor::TextSensor *s) { rloc16_sensor_ = s; }
   void set_thread_identity(text_sensor::TextSensor *s) { thread_identity_ = s; }
 #ifdef CONFIG_THREAD_BR_COMMISSIONER_WEB
@@ -81,6 +91,12 @@ class ThreadBorderRouter : public PollingComponent {
   bool initialize_();
   void sample_();
   void service_backbone_();
+#ifdef USE_THREAD_BR_NATIVE
+  void sample_native_radio_();
+  std::atomic<uint32_t> radio_activity_sequence_{0};
+  uint32_t last_tx_{0}, last_rx_{0};
+  bool have_radio_counters_{false};
+#endif
   bool send_rcp_led_control_(uint8_t operation, uint8_t update_mask, uint8_t values,
                              bool healthy, uint16_t sequence);  // Caller holds the OpenThread lock.
   void queue_rcp_led_action_(uint8_t bit, bool enabled);
@@ -127,6 +143,7 @@ class ThreadBorderRouter : public PollingComponent {
   binary_sensor::BinarySensor *rcp_connectivity_{nullptr}, *thread_attached_{nullptr};
   text_sensor::TextSensor *thread_role_{nullptr}, *rcp_version_{nullptr}, *rloc16_sensor_{nullptr};
   text_sensor::TextSensor *thread_identity_{nullptr};
+  text_sensor::TextSensor *radio_version_{nullptr};
   sensor::Sensor *neighbor_count_{nullptr}, *child_count_{nullptr};
 };
 

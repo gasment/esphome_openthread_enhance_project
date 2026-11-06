@@ -1,4 +1,4 @@
-"""ESP32-S3 + UART RCP Thread border router (ESPHome 2026.9+ / IDF 5.5)."""
+"""Thread border router with Wi-Fi/Ethernet backbone and RCP/native radio."""
 
 import base64
 import ipaddress
@@ -13,18 +13,16 @@ from esphome import pins
 from esphome.components import binary_sensor, esp32, sensor, text_sensor
 from esphome.components.socket import SocketType, consume_sockets
 from esphome.components.esp32 import (
-    VARIANT_ESP32S3,
     add_idf_component,
     add_idf_sdkconfig_option,
     include_builtin_idf_component,
-    only_on_variant,
     require_vfs_dir,
     require_vfs_select,
 )
 from esphome.const import CONF_ID
 from esphome.core import CORE, CoroPriority, coroutine_with_priority
 
-DEPENDENCIES = ["esp32", "wifi"]
+DEPENDENCIES = ["esp32"]
 AUTO_LOAD = ["network", "mdns", "binary_sensor", "sensor", "text_sensor"]
 CONFLICTS_WITH = ["openthread"]
 
@@ -95,8 +93,17 @@ def validate_network(config):
 
 def validate_config(config):
     require_vfs_select()
-    # IDF 5.5 Spinel calls access("/dev/uart/N") before registering UART VFS.
-    require_vfs_dir()
+    if config["backbone"] == "wifi" and config["radio"] != "uart_rcp":
+        raise cv.Invalid("backbone: wifi only supports radio: uart_rcp")
+    if config["radio"] == "uart_rcp":
+        if "rcp" not in config:
+            raise cv.Invalid("radio: uart_rcp requires rcp configuration")
+        # IDF Spinel checks /dev/uart/N before registering UART VFS.
+        require_vfs_dir()
+    else:
+        for key in ("rcp", "rcp_version"):
+            if key in config:
+                raise cv.Invalid(f"{key} is only supported with radio: uart_rcp")
     web = config.get("web")
     commissioner = config["commissioner"]
     if commissioner["enabled"] and web is None:
@@ -186,7 +193,9 @@ RCP_SCHEMA = cv.All(cv.Schema({
 CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(ThreadBorderRouter),
-        cv.Required("rcp"): RCP_SCHEMA,
+        cv.Optional("backbone", default="wifi"): cv.one_of("wifi", "eth", lower=True),
+        cv.Optional("radio", default="uart_rcp"): cv.one_of("uart_rcp", "native", lower=True),
+        cv.Optional("rcp"): RCP_SCHEMA,
         cv.Optional("web"): WEB_SCHEMA,
         cv.Optional("commissioner", default={}): COMMISSIONER_SCHEMA,
         cv.Optional("ha_url"): cv.All(cv.url, cv.string_strict),
@@ -197,13 +206,13 @@ CONFIG_SCHEMA = cv.All(
             device_class="connectivity", entity_category="diagnostic"),
         cv.Optional("thread_role"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
         cv.Optional("rcp_version"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
+        cv.Optional("radio_version"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
         cv.Optional("rloc16"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
         cv.Optional("thread_identity"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
         cv.Optional("neighbor_count"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
         cv.Optional("child_count"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
     }).extend(cv.polling_component_schema("15s")),
     cv.only_on_esp32,
-    only_on_variant(supported=[VARIANT_ESP32S3]),
     validate_config,
     consume_sockets(3, "thread_br", SocketType.UDP),
 )
@@ -213,7 +222,22 @@ def final_validate(config):
     full = fv.full_config.get()
     if "ha_token" in config and "api" not in full:
         raise cv.Invalid("HA name lookup requires api: (queries pause while Native API is disconnected)")
-    rcp = config["rcp"]
+    rcp = config.get("rcp", {})
+    native = config["radio"] == "native"
+    variant = esp32.get_esp32_variant()
+    if native:
+        if variant not in ("ESP32C5", "ESP32C6", "ESP32H2"):
+            raise cv.Invalid("radio: native currently supports ESP32-C5/C6/H2")
+    elif variant not in ("ESP32S3", "ESP32C5", "ESP32C6", "ESP32H2"):
+        raise cv.Invalid("radio: uart_rcp currently supports ESP32-S3/C5/C6/H2")
+    if config["backbone"] == "wifi":
+        if "wifi" not in full:
+            raise cv.Invalid("backbone: wifi requires wifi:")
+    else:
+        if "ethernet" not in full:
+            raise cv.Invalid("backbone: eth requires ethernet:")
+        if "wifi" in full:
+            raise cv.Invalid("backbone: eth requires removing wifi:")
     if not full.get("network", {}).get("enable_ipv6", False):
         raise cv.Invalid("Set network.enable_ipv6: true")
     version = full["esp32"]["framework"]["version"]
@@ -222,14 +246,14 @@ def final_validate(config):
     if config["used_psram"] and "psram" not in full:
         raise cv.Invalid("used_psram: true requires the psram component")
     if "esp32_ble" in full:
-        raise cv.Invalid("ESP32-S3 external coexistence requires disabling BLE (including esp32_improv)")
+        raise cv.Invalid("Thread BR currently requires disabling BLE (including esp32_improv)")
     if "web" in config and "web_server" in full and config["web"]["port"] == full["web_server"]["port"]:
         raise cv.Invalid("BR web.port must differ from ESPHome web_server.port")
     for key in ("uart_tx", "uart_rx", "rcp_reset_pin", "rcp_boot_pin",
                 "coex_request_pin", "coex_priority_pin", "coex_grant_pin", "coex_tx_line_pin"):
         if key in rcp and rcp[key].get("inverted", False):
             raise cv.Invalid(f"rcp.{key} must not be inverted")
-    for uart in full.get("uart", []):
+    for uart in full.get("uart", []) if not native else []:
         for key in ("tx_pin", "rx_pin"):
             if key in uart and uart[key]["number"] in (rcp["uart_tx"]["number"], rcp["uart_rx"]["number"]):
                 raise cv.Invalid("The Spinel UART pins cannot be shared with ESPHome uart")
@@ -261,7 +285,10 @@ async def to_code(config):
         else:
             add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE", True)
     network = config["thread_network_config"]
-    rcp = config["rcp"]
+    rcp = config.get("rcp", {})
+    native = config["radio"] == "native"
+    cg.add_define("USE_THREAD_BR_NATIVE" if native else "USE_THREAD_BR_UART_RCP")
+    cg.add_define("USE_THREAD_BR_ETH" if config["backbone"] == "eth" else "USE_THREAD_BR_WIFI")
     web = config.get("web")
     commissioner_enabled = web is not None and config["commissioner"]["enabled"]
     # Register pins with ESPHome, but let IDF own their UART/coex drivers.
@@ -269,8 +296,11 @@ async def to_code(config):
                 "coex_request_pin", "coex_priority_pin", "coex_grant_pin", "coex_tx_line_pin"):
         if key in rcp:
             await cg.gpio_pin_expression(rcp[key])
-    for name in ("openthread", "esp_coex", "esp_driver_uart", "esp_driver_gpio"):
+    for name in ("openthread", "esp_driver_gpio"):
         include_builtin_idf_component(name)
+    if not native:
+        for name in ("esp_coex", "esp_driver_uart"):
+            include_builtin_idf_component(name)
     if web is not None:
         for name in ("esp_http_server", "esp_http_client", "json"):
             include_builtin_idf_component(name)
@@ -283,8 +313,9 @@ async def to_code(config):
         "CONFIG_OPENTHREAD_ENABLED": True,
         "CONFIG_OPENTHREAD_FTD": True,
         "CONFIG_OPENTHREAD_BORDER_ROUTER": True,
-        "CONFIG_OPENTHREAD_RADIO_SPINEL_UART": True,
-        "CONFIG_OPENTHREAD_RADIO_NATIVE": False,
+        "CONFIG_OPENTHREAD_RADIO_SPINEL_UART": not native,
+        "CONFIG_OPENTHREAD_RADIO_NATIVE": native,
+        "CONFIG_OPENTHREAD_RADIO_SPINEL_SPI": False,
         "CONFIG_OPENTHREAD_RADIO_TREL": False,
         "CONFIG_OPENTHREAD_CLI": False,
         "CONFIG_OPENTHREAD_CONSOLE_ENABLE": False,
@@ -338,8 +369,11 @@ async def to_code(config):
         "CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM": False,
         "CONFIG_MDNS_TASK_CREATE_FROM_INTERNAL": True,
         "CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE": 4096,
-        "CONFIG_ESP_COEX_EXTERNAL_COEXIST_ENABLE": True,
+        "CONFIG_ESP_COEX_EXTERNAL_COEXIST_ENABLE": not native,
     }
+    if native:
+        # Explicitly repair cached sdkconfig when switching from an RCP build.
+        options["CONFIG_IEEE802154_ENABLED"] = True
     if web is not None:
         options["CONFIG_HTTPD_MAX_REQ_HDR_LEN"] = 1024
     for key, value in options.items():
@@ -352,8 +386,9 @@ async def to_code(config):
     await cg.register_component(var, config)
     if commissioner_enabled:
         cg.add(var.set_commissioner(config["commissioner"]["commissioner_id"], json.dumps(network)))
-    cg.add(var.set_uart_pins(rcp["uart_tx"]["number"], rcp["uart_rx"]["number"]))
-    cg.add(var.set_rcp_pins(rcp["rcp_reset_pin"]["number"], rcp["rcp_boot_pin"]["number"]))
+    if not native:
+        cg.add(var.set_uart_pins(rcp["uart_tx"]["number"], rcp["uart_rx"]["number"]))
+        cg.add(var.set_rcp_pins(rcp["rcp_reset_pin"]["number"], rcp["rcp_boot_pin"]["number"]))
     cg.add(var.set_force_dataset(network["force_dataset"]))
     if "omr_prefix" in network:
         cg.add(var.set_omr_prefix(network["omr_prefix"]))
@@ -364,13 +399,14 @@ async def to_code(config):
         cg.add(var.set_web(web["port"], auth, config["used_psram"]))
     if "ha_token" in config:
         cg.add(var.set_home_assistant(config["ha_url"].rstrip("/"), config["ha_token"]))
-    cg.add(var.set_coexistence_pins(*[rcp[key]["number"] for key in (
-        "coex_request_pin", "coex_priority_pin", "coex_grant_pin", "coex_tx_line_pin")]))
+    if not native:
+        cg.add(var.set_coexistence_pins(*[rcp[key]["number"] for key in (
+            "coex_request_pin", "coex_priority_pin", "coex_grant_pin", "coex_tx_line_pin")]))
     for key, source in (("rcp_connectivity", rcp), ("thread_attached", config)):
         if key in source:
             entity = await binary_sensor.new_binary_sensor(source[key])
             cg.add(getattr(var, f"set_{key}")(entity))
-    for key in ("thread_role", "rcp_version", "rloc16", "thread_identity"):
+    for key in ("thread_role", "rcp_version", "radio_version", "rloc16", "thread_identity"):
         if key in config:
             entity = await text_sensor.new_text_sensor(config[key])
             cg.add(getattr(var, f"set_{key}")(entity))
