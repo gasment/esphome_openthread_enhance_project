@@ -1,7 +1,7 @@
 # thread_p2p_transporter_nrf52
 
-依赖本项目的 `openthread_nrf52`，仅允许 `device_type: MTD`，用于 nRF52840/Zephyr 的 Thread 网内单播。
-FTD（包括省略 device_type 而使用默认 FTD）在配置校验阶段拒绝，不改变线上协议。
+依赖本项目的 `openthread_nrf52`，用于 nRF52840/Zephyr 的 Thread 网内单播。
+支持 `device_type: MTD`、`device_type: FTD`，也可省略 `device_type` 使用默认 FTD；不改变线上协议。
 不依赖 DNS、BR、网关、HA、cJSON 或存储组件。
 基线为 ESPHome 2026.9.1 / NCS 2.9.2。
 
@@ -58,8 +58,24 @@ thread_p2p_transporter_nrf52:
 
 ## 接收端与地址
 
-本组件现在仅提供 MTD 配置入口。此前本 fork 的 FTD 收发配置不再允许；
-接收端可继续使用 ESP-IDF 原版 thread_p2p_transporter，不受本限制影响。
+FTD 可配置本机 `address`，启用固定地址和端口的收发模式；`port` 默认 18520，
+通过 `on_receive` 处理业务消息。`device_type` 可显式设为 FTD，也可省略。
+FTD 不配置本机 `address` 时使用 ML-EID 和临时 UDP 端口发送并接收 ACK，
+此时不能配置本机 `port` 或 `on_receive`。MTD 仍保留上文的仅业务发送限制。
+
+以下示例添加到已有 FTD 网络配置（Mesh-Local 前缀为 `fdd1:dd68:9fa3:d942::/64`）：
+
+```yaml
+thread_p2p_transporter_nrf52:
+  id: p2p_transport
+  address: "fdd1:dd68:9fa3:d942::1002"
+  port: 54321
+  on_receive:
+    then:
+      - logger.log: "P2P message received"
+```
+
+接收端也可使用 ESP-IDF 原版 `thread_p2p_transporter`。
 所有地址属于实际生效 Dataset 的 Mesh-Local /64，不能使用 OMR、RLOC、ALOC、
 多播或保留 anycast 地址。本地和目标端口范围为 1..65535，默认 18520。
 目标表最多 128 项，不作为接收来源白名单。
@@ -137,6 +153,11 @@ Zephyr 使用 `k_msgq` 保存报文指针，OT 回调只检查长度、复制及
 组件不自动调整 `poll_period`，也不自动阻止或管理 MCU 休眠。
 
 ## 已验证范围
+
+2026-11-06：移除必须配置 `openthread_nrf52.device_type: MTD` 的校验，
+允许显式 FTD 和默认 FTD；保留 MTD 仅业务发送、地址前缀及发送动作的校验。
+FTD 的本机 `port` / `on_receive` 要求同时配置 `address`，避免接收配置被忽略。
+本次在 WSL 的 ESPHome Python 环境中通过 17 项配置校验：MTD / 显式 FTD / 默认 FTD 发送、FTD 固定地址收发及默认端口、MTD 禁止接收字段、FTD 接收字段缺少本机地址、三种配置的错误地址前缀。未编译或上板验证。
 
 当前工作区执行 `python tools/validate_p2p_send_callbacks.py`：检查三种负载、
 单独/同时配置动作级成功失败回调、延时回调参数、回调中发送及请求休眠，

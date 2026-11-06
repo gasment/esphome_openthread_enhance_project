@@ -138,11 +138,12 @@ def configured_prefix(ot):
 def final_validate(config):
     full = fv.full_config.get()
     ot = full.get("openthread_nrf52", {})
-    if ot.get("device_type", "FTD") != "MTD":
-        raise cv.Invalid("thread_p2p_transporter_nrf52 requires openthread_nrf52.device_type: MTD")
-    for key in ("address", "port", "on_receive"):
-        if key in config:
-            raise cv.Invalid(f"MTD is application-send-only; do not configure {key}")
+    if ot.get("device_type", "FTD") == "MTD":
+        for key in ("address", "port", "on_receive"):
+            if key in config:
+                raise cv.Invalid(f"MTD is application-send-only; do not configure {key}")
+    elif "address" not in config and any(key in config for key in ("port", "on_receive")):
+        raise cv.Invalid("Local address is required when configuring port or on_receive")
     prefix = configured_prefix(ot)
     addresses = ([config["address"]] if "address" in config else [])
     addresses.extend(entry["address"] for entry in config["send_to_addr_list"])
