@@ -15,6 +15,8 @@ Uses ESPHome's original CLI in this process. No installed source is changed.
 from __future__ import annotations
 
 import importlib.util
+import codecs
+import errno
 import inspect
 import logging
 import os
@@ -27,6 +29,9 @@ from contextlib import contextmanager, suppress
 from datetime import datetime
 
 _LOGGER = logging.getLogger("esphome_nrf52")
+
+_SWD_FREQUENCIES = (4000000, 2000000, 1000000, 500000, 100000)
+_swd_frequency = 1000000
 
 
 class _QuietSMPTimeouts(logging.Filter):
@@ -680,6 +685,114 @@ def get_rtt_env(nrf52) -> dict[str, str]:
     return nrf52.get_build_env()
 
 
+def _flash_attempt(command: list[str], env: dict[str, str], cwd: str) -> tuple[int, bool]:
+    """Preserve terminal progress while detecting SWD errors across output chunks."""
+    communication_error = False
+    child_env = dict(env)
+    child_env["PYTHONUNBUFFERED"] = "1"
+    process = None
+    master_fd = slave_fd = None
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    error_tail = ""
+
+    def forward(chunk, final=False):
+        nonlocal communication_error, error_tail
+        text = decoder.decode(chunk, final=final)
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        text = error_tail + text.lower()
+        if "swd/jtag communication failure" in text:
+            communication_error = True
+        error_tail = text[-128:]
+
+    try:
+        if os.name == "posix" and sys.stdout.isatty():
+            import pty
+            import termios
+
+            master_fd, slave_fd = pty.openpty()
+            # Preserve bytes exactly; do not translate LF into CRLF in the PTY.
+            attributes = termios.tcgetattr(slave_fd)
+            attributes[1] &= ~termios.OPOST
+            termios.tcsetattr(slave_fd, termios.TCSANOW, attributes)
+        process = subprocess.Popen(
+            command, env=child_env, cwd=cwd,
+            stdout=slave_fd if slave_fd is not None else subprocess.PIPE,
+            stderr=subprocess.STDOUT, bufsize=0,
+            start_new_session=(os.name == "posix"),
+        )
+        if slave_fd is not None:
+            os.close(slave_fd)
+            slave_fd = None
+        while True:
+            if master_fd is not None:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError as err:
+                    if err.errno != errno.EIO:
+                        raise
+                    break  # Linux PTY returns EIO when the slave closes.
+            else:
+                assert process.stdout is not None
+                chunk = process.stdout.read(4096)
+            if not chunk:
+                break
+            forward(chunk)
+        forward(b"", final=True)
+        return process.wait(), communication_error
+    finally:
+        with cleanup_signals():
+            try:
+                if process is not None:
+                    stop_rtt_process(process)
+                    if process.stdout is not None:
+                        process.stdout.close()
+            finally:
+                for fd in (slave_fd, master_fd):
+                    if fd is not None:
+                        os.close(fd)
+
+
+def run_swd_upload(config, args, host, original) -> bool:
+    """Retry the existing image at lower SWD clocks, never rebuilding it."""
+    global _swd_frequency
+
+    from esphome.components import nrf52
+    from esphome.core import CORE, EsphomeError
+
+    if CORE.using_toolchain_platformio:
+        return original(config, args, host) if original else False
+
+    paths = nrf52.get_build_paths()
+    env = get_rtt_env(nrf52)
+    command = [
+        str(paths["python_executable"]), "-m", "west", "flash",
+        "--skip-rebuild", "--runner", "pyocd",
+        "-d", str(CORE.relative_pioenvs_path(CORE.name)),
+    ]
+    for index, frequency in enumerate(_SWD_FREQUENCIES):
+        _LOGGER.info("SWD flash at %d Hz (%d/%d)", frequency, index + 1, len(_SWD_FREQUENCIES))
+        try:
+            returncode, communication_error = _flash_attempt(
+                [*command, "--", f"--frequency={frequency}"], env,
+                str(paths["framework_path"]),
+            )
+        except OSError as err:
+            raise EsphomeError(f"Cannot start nRF52 SWD flash: {err}") from err
+        if returncode == 0:
+            _swd_frequency = frequency
+            _LOGGER.info("SWD flash succeeded at %d Hz; RTT will use this clock", frequency)
+            return True
+        if returncode in (130, -2):
+            raise KeyboardInterrupt
+        if not communication_error:
+            raise EsphomeError(f"nRF52 pyocd flash failed (returncode={returncode}); not a SWD communication error")
+        if index + 1 < len(_SWD_FREQUENCIES):
+            _LOGGER.warning("SWD communication failed at %d Hz; retrying at %d Hz",
+                            frequency, _SWD_FREQUENCIES[index + 1])
+    raise EsphomeError("nRF52 pyocd flash failed at all SWD clocks (4 MHz to 100 kHz)")
+
+
 def run_rtt(config, args) -> bool:
     """Handle the native platform show_logs contract, using the SDK environment."""
     from esphome.components import nrf52
@@ -715,13 +828,17 @@ def run_rtt(config, args) -> bool:
 
     command = [
         *executable, "rtt", "-t", "nrf52840", "-M", "attach",
+        "-f", str(_swd_frequency),
         "-a", "0x20000000", "-s", "0x40000",
     ]
     _LOGGER.info("Starting SWD RTT channel 0. Press Ctrl+C to stop.")
     try:
         # Preserve the explicit native logs --reset option. Never reset by default.
         if getattr(args, "reset", False):
-            reset = subprocess.run([*executable, "reset", "-t", "nrf52840"], env=env, check=False)
+            reset = subprocess.run(
+                [*executable, "reset", "-t", "nrf52840", "-f", str(_swd_frequency)],
+                env=env, check=False,
+            )
             if reset.returncode:
                 raise EsphomeError(f"pyOCD reset exited with code {reset.returncode}")
         returncode = stream_rtt(command, env)
@@ -769,6 +886,7 @@ def rtt_hooks(cli):
                     return run_thread_upload(config, host)
                 if host.upper() == "PYOCD":
                     report_flash_usage(config)
+                    return run_swd_upload(config, args, "PYOCD", original)
                 return original(config, args, host) if original else False
 
             return upload_program
