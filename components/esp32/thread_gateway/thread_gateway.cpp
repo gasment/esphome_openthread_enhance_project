@@ -118,7 +118,7 @@ bool ThreadGateway::offline_(const Node &node) const {
   return age>=timeout;
 }
 bool ThreadGateway::controllable_(const Node &node) const {
-  return !offline_(node) && node.seen && node.mode == "online" && !node.session.empty() &&
+  return authorized_(node) && node.schema_ready && !offline_(node) && node.seen && node.mode == "online" && !node.session.empty() &&
          static_cast<uint32_t>(millis() - node.control_seen) < CONTROL_LEASE_MS;
 }
 
@@ -128,6 +128,7 @@ void ThreadGateway::setup() {
   if (!mutex_ || !packets_) { mark_failed(); return; }
   if (gateway_id_.empty()) gateway_id_ = "br_" + get_mac_address();
   command_id_ = esp_random();
+  load_ownership_();
   load_registry_();
   register_entities_();
   thread_br_thread_gateway_web_t callbacks{};
@@ -432,13 +433,14 @@ bool ThreadGateway::approved_fit_(std::string &error) const {
 }
 cJSON *ThreadGateway::serialize_registry_() const {
   auto *root = cJSON_CreateObject();
-  cJSON_AddNumberToObject(root, "version", 1);
+  cJSON_AddNumberToObject(root, "version", 2);
   auto *nodes = cJSON_AddArrayToObject(root, "nodes");
   static const char *types[] = {"numeric", "binary", "text", "switch", "number", "select", "button", "input_text", "light", "fan", "cover", "climate", "lock", "valve", "event"};
   for (const auto &node : nodes_) {
     auto *n = cJSON_CreateObject(); cJSON_AddItemToArray(nodes, n);
     cJSON_AddStringToObject(n, "id", node.id.c_str()); cJSON_AddStringToObject(n, "name", node.name.c_str());
-    cJSON_AddNumberToObject(n, "revision", node.revision);
+    cJSON_AddStringToObject(n, "manifest_hash", node.manifest_hash.c_str());
+    cJSON_AddStringToObject(n,"network",node.network.c_str());
     cJSON_AddStringToObject(n,"node_type",node.node_type.c_str());
     if(node.node_type=="reed") {
       cJSON_AddNumberToObject(n,"heartbeat_interval_ms",node.heartbeat_ms);
@@ -518,14 +520,14 @@ void ThreadGateway::load_registry_() {
   registry_saved_bytes_ = length;
   auto root = owned(cJSON_Parse(data.data()));
   const auto *list = item(root.get(), "nodes");
-  bool valid = number(root.get(), "version") == 1 && cJSON_IsArray(list) &&
+  bool valid = number(root.get(), "version") == 2 && cJSON_IsArray(list) &&
                cJSON_GetArraySize(list) <= static_cast<int>(MAX_NODES);
   size_t total = 0;
   std::set<std::string> node_ids;
   if (valid) {
     const cJSON *n;
     cJSON_ArrayForEach(n, list) {
-      Node node; node.id = str(n, "id"); node.name = str(n, "name", node.id); node.revision = number(n, "revision"); node.node_type=str(n,"node_type");
+      Node node; node.id = str(n, "id"); node.name = str(n, "name", node.id); node.manifest_hash = str(n, "manifest_hash");node.network=str(n,"network"); node.node_type=str(n,"node_type");
       if(node.node_type!="reed" && node.node_type!="sed"){valid=false;break;}
       node.heartbeat_ms=number(n,"heartbeat_interval_ms",10000);
       if(node.heartbeat_ms<1000||node.heartbeat_ms>15000){valid=false;break;}
@@ -560,6 +562,8 @@ void ThreadGateway::register_entities_() {
   std::string error;
   if (!approved_fit_(error)) { registry_error_ = error; return; }
   for (const auto &node : nodes_) {
+    const auto *binding=owner_(node.id,node.network);
+    if(!ledger_ready_||!binding||binding->owner!=gateway_id_)continue;
     if (std::none_of(node.entities.begin(), node.entities.end(), [](const Entity &e) { return e.approved; })) continue;
     auto device = std::make_unique<LiveDevice>();
     device->node = node.id;
@@ -665,20 +669,21 @@ void ThreadGateway::register_entities_() {
 }
 
 bool ThreadGateway::apply_manifest_(Node &node, const cJSON *json) {
-  const auto *revision = item(json, "revision"), *part = item(json, "part"), *parts = item(json, "parts");
+  const auto hash=str(json,"manifest_hash");
+  const auto *part = item(json, "part"), *parts = item(json, "parts");
   const auto *entities = item(json, "entities");
-  if (!integer(revision, 1, UINT32_MAX) || !integer(part, 0, 15) || !integer(parts, 1, 16) ||
+  if (!thread_transport::hex_id(hash,64) || !integer(part, 0, 15) || !integer(parts, 1, 16) ||
       part->valuedouble >= parts->valuedouble || !cJSON_IsArray(entities) ||
-      cJSON_GetArraySize(entities) > 32) { node.last_error = "Invalid manifest revision/part/entities"; return false; }
-  const auto rev = static_cast<uint32_t>(revision->valuedouble);
+      cJSON_GetArraySize(entities) > 32) { node.last_error = "Invalid manifest hash/part/entities"; return false; }
+  if(!node.expected_hash.empty()&&node.expected_hash!=hash){node.last_error="Unexpected manifest transaction";return false;}
+  node.expected_hash=hash;
   const unsigned index = static_cast<unsigned>(part->valuedouble), count = static_cast<unsigned>(parts->valuedouble);
   auto &m = node.manifest;
   if (m.parts && static_cast<uint32_t>(millis() - m.started_at) > 15000) m = Manifest{};
-  if (node.revision && rev < node.revision) { node.last_error = "Stale manifest revision"; return false; }
-  if (m.parts == 0 || m.revision != rev) {
-    m = Manifest{}; m.revision = rev; m.parts = count; m.started_at = millis();
+  if (m.parts == 0 || m.hash != hash) {
+    m = Manifest{}; m.hash = hash; m.parts = count; m.started_at = millis();
     m.name = str(json, "name", node.name);
-    m.received.assign(count, false); m.pages.resize(count);
+    m.received.assign(count, false); m.pages.resize(count);m.raw_pages.resize(count);
   }
   if (m.parts != count || m.name != str(json, "name", node.name)) {
     node.last_error = "Manifest part count/name changed"; return false;
@@ -690,6 +695,9 @@ bool ThreadGateway::apply_manifest_(Node &node, const cJSON *json) {
     if (!parse_entity_(j, e, error)) { node.last_error = error; return false; }
     page.push_back(std::move(e));
   }
+  std::vector<std::string> raw;
+  cJSON_ArrayForEach(j,entities) raw.push_back(thread_transport::encode(j));
+  m.raw_pages[index]=std::move(raw);
   m.pages[index] = std::move(page); m.received[index] = true;
   for (bool done : m.received) if (!done) return true;
   std::vector<Entity> complete;
@@ -705,30 +713,17 @@ bool ThreadGateway::apply_manifest_(Node &node, const cJSON *json) {
     }
     complete.push_back(std::move(e));
   }
-  if (node.revision == rev) {
-    bool same = complete.size() == node.entities.size();
-    for (const auto &e : complete) {
-      const auto *old = find_entity_(node, e.id);
-      same &= old && old->kind == e.kind && old->name == e.name && old->unit == e.unit &&
-          old->device_class == e.device_class && old->icon == e.icon && old->state_class == e.state_class &&
-          old->entity_category == e.entity_category && old->capabilities == e.capabilities &&
-          old->disabled_by_default == e.disabled_by_default && old->force_update == e.force_update &&
-          old->trigger_on_initial_state == e.trigger_on_initial_state &&
-          old->decimals == e.decimals && old->minimum == e.minimum && old->maximum == e.maximum &&
-          old->step == e.step && old->max_length == e.max_length && old->options == e.options;
-    }
-    if (!same || node.name != m.name) {
-      node.last_error = "Schema changed without increasing revision"; m = Manifest{}; return false;
-    }
-  }
-  // Unchanged full manifests never cause NVS writes. Revisions must increase for schema changes.
+  std::vector<std::string> descriptors;
+  for(const auto &p:m.raw_pages)descriptors.insert(descriptors.end(),p.begin(),p.end());
+  if(thread_transport::manifest_hash(m.name,descriptors)!=hash){node.last_error="Manifest fingerprint mismatch";m=Manifest{};return false;}
+  // Equality is content equality. Firmware rollback is a valid new manifest.
   auto before = owned(serialize_registry_());
   const std::string previous = encode(before.get());
   before.reset();
   auto old = std::move(node.entities);
-  const auto old_revision = node.revision;
+  const auto old_hash = node.manifest_hash;
   const auto old_name = node.name; node.name = m.name;
-  node.entities = std::move(complete); node.revision = rev; m = Manifest{};
+  node.entities = std::move(complete); node.manifest_hash = hash; m = Manifest{};
   if (auto_register_) {
     for (auto &e : node.entities) {
       if (e.approved || (!readonly_(e.kind) && !(node.node_type=="reed")) || !metadata_supported_(e)) continue;
@@ -738,15 +733,16 @@ bool ThreadGateway::apply_manifest_(Node &node, const cJSON *json) {
   }
   std::string validation;
   if (!approved_fit_(validation)) {
-    node.entities = std::move(old); node.revision = old_revision; node.name = old_name; node.last_error = validation; return false;
+    node.entities = std::move(old); node.manifest_hash = old_hash; node.name = old_name; node.last_error = validation; return false;
   }
   auto after = owned(serialize_registry_());
   const std::string current = encode(after.get());
   after.reset();
   if (current != previous) {
     dirty_ = true;
-    if (!save_registry_()) node.last_error = registry_error_;
+    if (!save_registry_()) {node.entities=std::move(old);node.manifest_hash=old_hash;node.name=old_name;node.last_error=registry_error_;node.schema_ready=false;return false;}
   }
+  node.schema_ready=true;
   return true;
 }
 
@@ -799,7 +795,16 @@ bool ThreadGateway::start_transport_() {
   if (ready) ESP_LOGI(TAG, "UDP discovery/data listeners ready");
   return ready;
 }
-bool ThreadGateway::send_(const otIp6Address &address, uint16_t port, const std::string &payload, bool discovery) {
+bool ThreadGateway::send_(const otIp6Address &address, uint16_t port, const std::string &original, bool discovery) {
+  std::string payload=original;
+  if(!discovery) {
+    auto *j=cJSON_Parse(original.c_str());if(!j)return false;
+    if(auto *n=find_node_(str(j,"node"));n&&!n->context.empty()) {
+      cJSON_DeleteItemFromObjectCaseSensitive(j,"ctx");cJSON_AddStringToObject(j,"ctx",n->context.c_str());
+    }
+    payload=encode(j);cJSON_Delete(j);
+  }
+
   if (!transport_ready_ || payload.empty() || payload.size() > 1232 || !esp_openthread_lock_acquire(0)) return false;
   auto *ot = esp_openthread_get_instance();
   bool ok = false;
@@ -823,8 +828,10 @@ bool ThreadGateway::send_(const otIp6Address &address, uint16_t port, const std:
 void ThreadGateway::offer_(const otIp6Address &address, uint16_t port, const cJSON *request_id) {
   if (address_.empty()) return;
   auto json = owned(cJSON_CreateObject());
-  cJSON_AddNumberToObject(json.get(), "v", 1);
-  cJSON_AddStringToObject(json.get(), "type", "offer");
+  cJSON_AddNumberToObject(json.get(), "v", 2);
+  cJSON_AddStringToObject(json.get(), "type", "announcement");
+  cJSON_AddStringToObject(json.get(), "network", network_.c_str());
+  cJSON_AddStringToObject(json.get(), "digest", ownership_digest_().c_str());
   cJSON_AddStringToObject(json.get(), "gateway_id", gateway_id_.c_str());
   cJSON_AddStringToObject(json.get(), "address", address_.c_str());
   cJSON_AddNumberToObject(json.get(), "port", data_port_);
@@ -873,7 +880,7 @@ bool ThreadGateway::acknowledge_report_(Node &node, const Packet &packet, const 
   if (it->received != complete_mask) return true;
   // Receipt ACK only: send immediately, before sequence filtering, value handling or HA publication.
   auto reply = owned(cJSON_CreateObject());
-  cJSON_AddNumberToObject(reply.get(), "v", 1);
+  cJSON_AddNumberToObject(reply.get(), "v", 2);
   cJSON_AddStringToObject(reply.get(), "type", "report_ack");
   cJSON_AddStringToObject(reply.get(), "gateway_id", gateway_id_.c_str());
   cJSON_AddStringToObject(reply.get(), "node", node.id.c_str());
@@ -895,17 +902,21 @@ void ThreadGateway::process_(const Packet &packet) {
   received_++;
   const char *end = nullptr;
   auto json = owned(cJSON_ParseWithLengthOpts(packet.data, packet.size + 1, &end, true));
-  if (!cJSON_IsObject(json.get()) || number(json.get(), "v") != 1) { errors_++; return; }
+  if (!cJSON_IsObject(json.get()) || number(json.get(), "v") != 2) { errors_++; return; }
   const std::string type = str(json.get(), "type");
-  if (packet.discovery) {
-    if (type == "discover") {
-      const auto *request = item(json.get(), "request_id");
-      if ((cJSON_IsString(request) && request->valuestring && std::strlen(request->valuestring) <= 32) ||
-          integer(request, 0, UINT32_MAX)) offer_(packet.address, packet.port, request);
-      else errors_++;
-    } else if (type != "offer") errors_++;
-    return;
+  if (packet.discovery) { public_packet_(packet,json.get()); return; }
+  const auto *binding=owner_(str(json.get(),"node"));
+  if(!ledger_ready_||!binding||binding->owner!=gateway_id_||revoked_(binding->token)) {
+    reject_context_(packet,json.get(),"binding_revoked");return;
   }
+  auto *known=find_node_(str(json.get(),"node"));
+  if(!known||known->context.empty()||str(json.get(),"ctx")!=known->context||str(json.get(),"session")!=known->session) {
+    reject_context_(packet,json.get(),"context_expired");return;
+  }
+  auto *route=candidate_(known->id);
+  if(!route||packet.port!=route->port||std::memcmp(&packet.address,&route->address,sizeof(packet.address)))return;
+  route->seen_at=millis();
+  if(type=="state"&&!known->schema_ready){reject_context_(packet,json.get(),"context_expired");return;}
   if (type != "manifest" && type != "state" && type != "presence" && type != "command_result") { errors_++; return; }
   const std::string id = str(json.get(), "node"), session = str(json.get(), "session");
   if (!identifier(id) || !identifier(session) || !bounded_string(json.get(), "name", 96)) { errors_++; return; }
@@ -989,44 +1000,51 @@ void ThreadGateway::process_(const Packet &packet) {
   }
   // Unknown state/presence after an explicit deletion must be able to rebuild
   // a live node's manifest without waiting for that physical node to reboot.
-  if ((type == "state" || type == "presence") && node->revision == 0 &&
+  if ((type == "state" || type == "presence") && node->manifest_hash.empty() &&
       (!node->manifest_requested || uint32_t(millis() - node->manifest_request_at) >= 1000)) {
     node->manifest_requested = true; node->manifest_request_at = millis();
     auto request = owned(cJSON_CreateObject());
-    cJSON_AddNumberToObject(request.get(), "v", 1);
+    cJSON_AddNumberToObject(request.get(), "v", 2);
     cJSON_AddStringToObject(request.get(), "type", "manifest_request");
     cJSON_AddStringToObject(request.get(), "gateway_id", gateway_id_.c_str());
     cJSON_AddStringToObject(request.get(), "node", id.c_str());
     cJSON_AddStringToObject(request.get(), "session", session.c_str());
     send_(packet.address, packet.port, encode(request.get()));
   }
+  if(type=="presence"&&!flag(json.get(),"check_manifest")&&node->schema_ready) {
+    auto reply=owned(cJSON_CreateObject());cJSON_AddNumberToObject(reply.get(),"v",2);
+    cJSON_AddStringToObject(reply.get(),"type","presence_ack");cJSON_AddStringToObject(reply.get(),"node",id.c_str());
+    cJSON_AddStringToObject(reply.get(),"session",session.c_str());cJSON_AddStringToObject(reply.get(),"gateway_id",gateway_id_.c_str());
+    send_(packet.address,packet.port,encode(reply.get()));
+  }
   if(type=="presence" && flag(json.get(),"check_manifest")) {
     auto reply=owned(cJSON_CreateObject());
-    const bool matched=node->revision!=0 && node->revision==number(json.get(),"revision");
-    cJSON_AddNumberToObject(reply.get(),"v",1);
+    const bool matched=!node->manifest_hash.empty() && node->manifest_hash==str(json.get(),"manifest_hash");
+    cJSON_AddNumberToObject(reply.get(),"v",2);
     cJSON_AddStringToObject(reply.get(),"type",matched?"manifest_ack":"manifest_request");
     cJSON_AddStringToObject(reply.get(),"node",id.c_str()); cJSON_AddStringToObject(reply.get(),"session",session.c_str());
     cJSON_AddStringToObject(reply.get(),"gateway_id",gateway_id_.c_str());
-    cJSON_AddNumberToObject(reply.get(),"revision",number(json.get(),"revision"));
+    cJSON_AddStringToObject(reply.get(),"manifest_hash",str(json.get(),"manifest_hash").c_str());
+    node->expected_hash=str(json.get(),"manifest_hash");node->schema_ready=matched;
     cJSON_AddBoolToObject(reply.get(),"accepted",matched); cJSON_AddBoolToObject(reply.get(),"complete",matched);
-    const bool missing=std::any_of(node->entities.begin(),node->entities.end(),[](const Entity &e){return e.kind!=Kind::BUTTON && e.kind!=Kind::EVENT && !e.has_source_sequence;});
-    cJSON_AddBoolToObject(reply.get(),"request_state",matched && missing);
+    cJSON_AddBoolToObject(reply.get(),"request_state",matched);
     send_(packet.address,packet.port,encode(reply.get()));
   }
   if (type == "manifest") {
     const bool accepted = apply_manifest_(*node, json.get());
     if (!accepted) node->errors++;
     auto reply = owned(cJSON_CreateObject());
-    cJSON_AddNumberToObject(reply.get(), "v", 1);
+    cJSON_AddNumberToObject(reply.get(), "v", 2);
     cJSON_AddStringToObject(reply.get(), "type", "manifest_ack");
     cJSON_AddStringToObject(reply.get(), "gateway_id", gateway_id_.c_str());
     cJSON_AddStringToObject(reply.get(), "node", id.c_str());
     cJSON_AddStringToObject(reply.get(), "session", session.c_str());
-    cJSON_AddNumberToObject(reply.get(), "revision", number(json.get(), "revision"));
+    cJSON_AddStringToObject(reply.get(), "manifest_hash", str(json.get(), "manifest_hash").c_str());
     cJSON_AddBoolToObject(reply.get(), "accepted", accepted);
     cJSON_AddBoolToObject(reply.get(), "complete", accepted && !node->manifest.parts &&
-        node->revision == number(json.get(), "revision"));
+        node->manifest_hash == str(json.get(), "manifest_hash"));
     if (!accepted) cJSON_AddStringToObject(reply.get(), "error", node->last_error.c_str());
+    cJSON_AddBoolToObject(reply.get(), "request_state",node->schema_ready);
     send_(packet.address, packet.port, encode(reply.get()));
   } else if (type == "state") {
     const cJSON *value;
@@ -1106,6 +1124,10 @@ void ThreadGateway::loop() {
     if (attached_) {
       char address[OT_IP6_ADDRESS_STRING_SIZE];
       otIp6AddressToString(otThreadGetMeshLocalEid(ot), address, sizeof(address)); current = address;
+      const auto net=thread_transport::network(ot);
+      if(net!=network_){network_=net;last_announce_=0;sync_request_at_=0;candidates_.clear();
+        for(auto &node:nodes_){node.context.clear();node.schema_ready=false;}}
+
     }
     esp_openthread_lock_release();
     if (attached_ && (current != address_ || last_announce_ == 0 ||
@@ -1115,6 +1137,7 @@ void ThreadGateway::loop() {
       if (otIp6AddressFromString(group_.c_str(), &group) == OT_ERROR_NONE) offer_(group, discovery_port_, nullptr);
     }
   }
+  service_public_();
   Packet *packet;
   // Bound work per loop; OpenThread callbacks only enqueue and never publish entities.
   for (unsigned k = 0; k < 4 && xQueueReceive(packets_, &packet, 0) == pdTRUE; ++k) {
@@ -1161,7 +1184,7 @@ cJSON *ThreadGateway::node_json_(const Node &node, bool details) const {
   cJSON_AddBoolToObject(j, "control_ready", controllable_(node));
   if (node.seen) cJSON_AddNumberToObject(j, "last_seen_ms", uint32_t(millis() - node.last_seen));
   else cJSON_AddNullToObject(j, "last_seen_ms");
-  cJSON_AddNumberToObject(j, "revision", node.revision);
+  cJSON_AddStringToObject(j, "manifest_hash", node.manifest_hash.c_str());
   cJSON_AddNumberToObject(j, "received", node.received);
   cJSON_AddNumberToObject(j, "duplicates", node.duplicates);
   cJSON_AddNumberToObject(j, "errors", node.errors);
@@ -1228,6 +1251,7 @@ cJSON *ThreadGateway::web_get(const char *raw, int &status) {
   if (!lock.acquired) return failure(status, 503, "Thread gateway busy");
   status = 200;
   const std::string path(raw);
+  if(path=="/thread_gateway/api/discovered"||path=="/thread_gateway/api/adopt") return binding_web_(path,nullptr,status);
   if (path == "/thread_gateway/api/info" || path == "/thread_gateway/api/nodes") {
     auto *j = cJSON_CreateObject();
     cJSON_AddBoolToObject(j, "enabled", true);
@@ -1271,7 +1295,7 @@ cJSON *ThreadGateway::web_get(const char *raw, int &status) {
     }
     if (path == "/thread_gateway/api/nodes") {
       auto *nodes = cJSON_AddArrayToObject(j, "nodes");
-      for (const auto &node : nodes_) cJSON_AddItemToArray(nodes, node_json_(node, false));
+      for (const auto &node : nodes_) if(authorized_(node)) cJSON_AddItemToArray(nodes, node_json_(node, false));
     }
     return j;
   }
@@ -1289,6 +1313,7 @@ cJSON *ThreadGateway::web_post(const char *raw, const cJSON *request, int &statu
   if (shutting_down_ || reboot_pending_) return failure(status, 409, "Gateway is restarting");
   if (!cJSON_IsObject(request)) return failure(status, 400, "Expected JSON object");
   const std::string path(raw);
+  if(path=="/thread_gateway/api/adopt") return binding_web_(path,request,status);
   if (path == "/thread_gateway/api/apply") {
     if (!flag(request, "confirm")) return failure(status, 400, "Reboot confirmation required");
     std::string error;
@@ -1304,8 +1329,9 @@ cJSON *ThreadGateway::web_post(const char *raw, const cJSON *request, int &statu
   const std::string id = path.substr(prefix.size(), slash - prefix.size()), action = path.substr(slash);
   auto *node = identifier(id) ? find_node_(id) : nullptr;
   if (!node) return failure(status, 404, "Unknown node");
-  if (action == "/delete") {
+  if (action == "/delete" || action == "/unbind") {
     if (!flag(request, "confirm")) return failure(status, 400, "Node deletion confirmation required");
+    if(!revoke_node_(id))return failure(status,500,ledger_error_);
     const auto position = static_cast<size_t>(node - nodes_.data());
     const size_t previous_registry_bytes = registry_bytes_;
     Node removed = std::move(nodes_[position]);
@@ -1318,7 +1344,7 @@ cJSON *ThreadGateway::web_post(const char *raw, const cJSON *request, int &statu
     commands_.erase(std::remove_if(commands_.begin(), commands_.end(),
         [&id](const Command &c) { return c.node == id; }), commands_.end());
     // App owns this boot's API registry. Keep live_ untouched until reboot.
-    // Future node reports may rediscover this node; deletion is not a blocklist.
+    // Authorization is already durably revoked; future reports must rebind.
     dirty_ = true;
     auto *j = cJSON_CreateObject();
     cJSON_AddBoolToObject(j, "ok", true);
@@ -1383,7 +1409,7 @@ cJSON *ThreadGateway::web_post(const char *raw, const cJSON *request, int &statu
   Command command; command.node = id; command.entity = entity_id; command.session = node->session;
   command.id = ++command_id_; if(command.id==0)command.id=++command_id_;
   auto j = owned(cJSON_CreateObject());
-  cJSON_AddNumberToObject(j.get(), "v", 1); cJSON_AddStringToObject(j.get(), "type", "command");
+  cJSON_AddNumberToObject(j.get(), "v", 2); cJSON_AddStringToObject(j.get(), "type", "command");
   cJSON_AddStringToObject(j.get(), "node", id.c_str());
   cJSON_AddStringToObject(j.get(), "session", node->session.c_str());
   cJSON_AddStringToObject(j.get(), "gateway_id", gateway_id_.c_str());

@@ -101,7 +101,7 @@ async def reserve_subdevices(capacity):
 
 
 def validate_thread_gateway(config):
-    if config["discovery"]["port"] == config["udp"]["port"]:
+    if config["announcement"]["udp_port"] == 18512:
         raise cv.Invalid("Discovery and data ports must be different")
     total = sum(config["capacity"][key] for key in ENTITY_CAPACITY_KEYS)
     if not 1 <= total <= 2048:
@@ -127,17 +127,16 @@ THREAD_GATEWAY_SCHEMA = cv.All(cv.Schema({
     cv.GenerateID(): cv.declare_id(ThreadGateway),
     cv.Required("thread_br_id"): cv.use_id(thread_br.ThreadBorderRouter),
     cv.Optional("reed_heartbeat_misses", default=3): cv.int_range(min=2, max=10),
-    cv.Optional("gateway_id"): identifier,
+    cv.Optional("gateway_id"): cv.invalid("Move gateway_id into announcement"),
     cv.Optional("entity_auto_register", default=False): cv.boolean,
     cv.Optional("on_node_update"): NODE_UPDATE_AUTOMATION,
-    cv.Optional("discovery", default={}): cv.Schema({
-        cv.Optional("multicast_address", default="ff13::8000:8562"): multicast_address,
-        cv.Optional("port", default=18512): cv.port,
+    cv.Optional("discovery"): cv.invalid("Discovery is built in; use announcement for gateway business parameters"),
+    cv.Optional("udp"): cv.invalid("Move udp.port to announcement.udp_port"),
+    cv.Optional("announcement", default={}): cv.Schema({
+        cv.Optional("gateway_id"): identifier,
+        cv.Optional("udp_port", default=18513): cv.port,
         cv.Optional("address_ttl", default="1h"): positive_seconds,
         cv.Optional("announce_interval", default="60s"): positive_seconds,
-    }),
-    cv.Optional("udp", default={}): cv.Schema({
-        cv.Optional("port", default=18513): cv.port,
     }),
     cv.Optional("capacity", default={}): cv.Schema({
         cv.Optional("sensors", default=32): cv.int_range(min=0, max=1024),
@@ -192,14 +191,12 @@ async def to_code(config):
     cg.add(var.set_parent(parent))
     cg.add(var.set_reed_heartbeat_misses(config["reed_heartbeat_misses"]))
     cg.add(parent.set_thread_gateway(var))
-    if "gateway_id" in config:
-        cg.add(var.set_gateway_id(config["gateway_id"]))
+    d = config["announcement"]
+    if "gateway_id" in d:
+        cg.add(var.set_gateway_id(d["gateway_id"]))
     cg.add(var.set_auto_register(config["entity_auto_register"]))
-    d = config["discovery"]
-    cg.add(var.set_discovery(d["multicast_address"], d["port"],
-                            d["address_ttl"].total_seconds,
-                            d["announce_interval"].total_seconds))
-    cg.add(var.set_data_port(config["udp"]["port"]))
+    cg.add(var.set_announcement(d["udp_port"], d["address_ttl"].total_seconds,
+                                d["announce_interval"].total_seconds))
     c = config["capacity"]
     cg.add(var.set_capacity(c["sensors"], c["binary_sensors"], c["text_sensors"]))
     cg.add(var.set_control_capacity(3, c["switches"]))

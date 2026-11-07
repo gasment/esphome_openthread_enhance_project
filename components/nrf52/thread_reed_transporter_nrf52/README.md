@@ -1,5 +1,9 @@
 # thread_reed_transporter_nrf52
 
+> **协议 v2（破坏性更新）**：配置和接入逻辑以根目录 [更新日志与 YAML diff](../../../TRANSPORT_V2_CHANGELOG.md) 为准。
+> 下文原 v1 报文/旧发现配置及手工 revision 说明保留作历史参考，不适用于当前实现。
+
+
 独立的 nRF52/Zephyr 常在线实体 UDP transporter，基线为 ESPHome 2026.9.1、
 NCS 2.9.2。依赖 `openthread_nrf52`，自动加载 `thread_entity_bridge_nrf52`。
 原 ESP32/ESP-IDF 组件和网关保持不变，来源及原文件哈希见 `upstream.json`。

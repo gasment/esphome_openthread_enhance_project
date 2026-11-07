@@ -10,4 +10,12 @@ template<typename... Ts> class DiscoveryAction : public Action<Ts...> {
   ThreadReedTransporter *parent_;
 };
 
+template<typename... Ts> class UnbindAction : public Action<Ts...> {
+ public:
+  explicit UnbindAction(ThreadReedTransporter *parent) : parent_(parent) {}
+  void play(const Ts &...x) override { parent_->unbind(); }
+ protected:
+  ThreadReedTransporter *parent_;
+};
+
 }

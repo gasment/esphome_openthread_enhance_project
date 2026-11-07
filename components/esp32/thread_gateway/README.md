@@ -1,5 +1,9 @@
 # Thread gateway（第一版）
 
+> **协议 v2（破坏性更新）**：配置和接入逻辑以根目录 [更新日志与 YAML diff](../../../TRANSPORT_V2_CHANGELOG.md) 为准。
+> 下文原 v1 报文/旧发现配置及手工 revision 说明保留作历史参考，不适用于当前实现。
+
+
 通过独立的 `thread_gateway` 配置启用，必须用 `thread_br_id` 引用显式配置了 `web` 的 BR，运行在 ESP32-S3 网关上，使用 IDF OpenThread 的原生 UDP Socket 接收 Thread 多跳节点报文，再通过网关自身的 ESPHome Native API 向 HA 提供只读实体及常在线 REED 的标准控制实体。不需要 MQTT。
 
 Native API 兼容层同时支持 ESPHome 2026.9 的 `encode/calculate_size` 和 2026.10 的

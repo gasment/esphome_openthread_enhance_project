@@ -118,11 +118,11 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.Required("openthread_id"): cv.use_id(openthread_nrf52.OpenThreadComponent),
     cv.Required("node_id"): identifier,
     cv.Optional("name", default="SED node"): cv.string_strict,
-    cv.Optional("manifest_revision", default=1): cv.int_range(min=1, max=4294967295),
+    cv.Optional("manifest_revision"): cv.invalid("manifest_revision was removed; manifests are fingerprinted automatically"),
     cv.Optional("discovery", default={}): cv.Schema({
         cv.Optional("gateway_id"): identifier,
-        cv.Optional("multicast_address", default="ff13::8000:8562"): multicast,
-        cv.Optional("port", default=18512): cv.port,
+        cv.Optional("multicast_address"): cv.invalid("Discovery is built in; remove multicast_address"),
+        cv.Optional("port"): cv.invalid("Discovery is built in; remove port"),
         cv.Optional("timeout", default="1s"): cv.positive_time_period_milliseconds,
     }),
     cv.Optional("deep_sleep_id"): cv.use_id(cg.esphome_ns.namespace("deep_sleep_nrf52").class_("DeepSleepComponent", cg.Component)),
@@ -161,9 +161,9 @@ async def to_code(config):
     if "deep_sleep_id" in config:
         sleep = await cg.get_variable(config["deep_sleep_id"])
         cg.add(var.set_deep_sleep(sleep))
-    cg.add(var.set_node(config["node_id"], config["name"], config["manifest_revision"]))
+    cg.add(var.set_node(config["node_id"], config["name"]))
     d = config["discovery"]
-    cg.add(var.set_discovery(d.get("gateway_id", ""), d["multicast_address"], d["port"], d["timeout"]))
+    cg.add(var.set_discovery(d.get("gateway_id", ""), d["timeout"]))
     cg.add(var.set_timing(config["timeout"], config["heartbeat_interval"]))
     ready = await cg.templatable(config["control_ready"], [], cg.bool_)
     if isinstance(config["control_ready"], bool):
@@ -377,3 +377,12 @@ def validate_events(config, full):
         if len(json.dumps({"event_types": types}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 900:
             raise cv.Invalid("Event capabilities must fit 900 UTF-8 bytes")
 
+
+# Local recovery when the former gateway is unavailable. Persistence runs in loop().
+UnbindAction = ns.class_("UnbindAction", automation.Action)
+
+@automation.register_action("thread_sed_transporter_nrf52.unbind", UnbindAction,
+                            DISCOVERY_ACTION_SCHEMA, synchronous=True)
+async def unbind_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)

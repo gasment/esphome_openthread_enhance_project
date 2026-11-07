@@ -43,11 +43,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;padding:12px;back
 <div class="flex-between mb-16 thread_gateway-actions"><div><h1 class="page-title" id="title">网关管理</h1>
 <p class="page-desc" id="subtitle">按节点管理传感器与控制项</p></div>
 <div class="thread_gateway-actions"><a class="btn btn-sm" href="/thread_gateway" id="back" hidden>返回节点列表</a>
-<button class="btn btn-sm" id="deleteNode" style="color:var(--danger)" hidden>删除节点</button>
+<button class="btn btn-sm" id="deleteNode" style="color:var(--danger)" hidden>解绑并移除节点</button>
 <button class="btn btn-sm" id="refresh">刷新</button><button class="btn btn-primary btn-sm" id="apply">重启并应用清单</button></div></div>
 <section class="card section" aria-label="网关状态"><div id="summary" class="thread_gateway-status"></div></section>
 <section class="card section thread_gateway-capacity-section"><div class="card-header">容量与存储</div><div id="capacitySummary" class="thread_gateway-capacity-grid"></div></section>
 <div id="systemNotice" role="status"></div><div id="notice" role="status" aria-live="polite"></div>
+<section class="card section" id="discoveredSection"><div class="card-header">新发现节点</div>
+<p class="thread_gateway-meta">点击接入后等待节点确认。休眠节点在下次唤醒发现时处理；未确认前不注册实体。</p><div id="discoveredNodes"></div></section>
 <section class="card section" id="nodesSection"><div class="card-header thread_gateway-node-header"><span>节点</span>
 <div class="thread_gateway-filters" role="group" aria-label="筛选节点">
 <button type="button" class="btn btn-primary btn-sm" id="filterAll" aria-pressed="true">全部</button>

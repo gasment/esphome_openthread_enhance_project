@@ -1,4 +1,5 @@
 #pragma once
+#include "esphome/components/thread_entity_bridge/transport_protocol.h"
 #include "esphome/core/defines.h"
 #ifdef USE_THREAD_GATEWAY
 #include <array>
@@ -69,8 +70,8 @@ class ThreadGateway : public Component {
   void set_parent(thread_br::ThreadBorderRouter *parent) { parent_ = parent; }
   void set_gateway_id(const std::string &value) { gateway_id_ = value; }
   void set_auto_register(bool value) { auto_register_ = value; }
-  void set_discovery(const std::string &group, uint16_t port, uint32_t ttl, uint32_t interval) {
-    group_ = group; discovery_port_ = port; address_ttl_ = ttl; announce_ms_ = interval * 1000;
+  void set_announcement(uint16_t port, uint32_t ttl, uint32_t interval) {
+    data_port_=port;address_ttl_=ttl;announce_ms_=interval*1000;
   }
   void set_data_port(uint16_t value) { data_port_ = value; }
   void set_capacity(uint16_t numeric, uint16_t binary, uint16_t text) { capacity_[0]=numeric; capacity_[1]=binary; capacity_[2]=text; }
@@ -111,7 +112,9 @@ class ThreadGateway : public Component {
   };
   struct Manifest {
     std::string name;
-    uint32_t revision{0}, started_at{0};
+    std::string hash;
+    std::vector<std::vector<std::string>> raw_pages;
+    uint32_t started_at{0};
     unsigned parts{0};
     std::vector<bool> received;
     std::vector<std::vector<Entity>> pages;
@@ -125,7 +128,9 @@ class ThreadGateway : public Component {
     std::string node_type{"sed"};
     uint32_t heartbeat_ms{10000};
     uint16_t port{0};
-    uint32_t last_seen{0}, control_seen{0}, revision{0}, sequence{0};
+    std::string network, manifest_hash, expected_hash, context;
+    bool schema_ready{false};
+    uint32_t last_seen{0}, control_seen{0}, sequence{0};
     bool seen{false}, has_sequence{false}, manifest_requested{false};
     uint32_t manifest_request_at{0};
     uint32_t received{0}, duplicates{0}, errors{0};
@@ -221,6 +226,38 @@ class ThreadGateway : public Component {
   cJSON *node_json_(const Node &node, bool details) const;
   static cJSON *web_get_bridge_(void *, const char *, int *);
   static cJSON *web_post_bridge_(void *, const char *, const cJSON *, int *);
+
+  struct Ownership {
+    std::string network,device,node,name,node_type,owner,token,state;
+    uint32_t generation{0};
+  };
+  struct Candidate {
+    std::string device,node,name,node_type,session,expected,owner,token,context;
+    otIp6Address address{};
+    uint16_t port{0};uint32_t request{0},generation{0},seen_at{0};
+    bool requested{false},manual_required{false};
+  };
+  std::vector<Ownership> ownership_;
+  std::vector<Candidate> candidates_;
+  std::string network_,ledger_error_;
+  bool ledger_ready_{false},sync_scheduled_{false};
+  size_t sync_cursor_{0};uint32_t sync_send_at_{0},sync_request_at_{0};
+  void load_ownership_();
+  bool save_ownership_();
+  bool merge_ownership_(const Ownership &record);
+  bool revoked_(const std::string &token) const;
+  const Ownership *owner_(const std::string &node,const std::string &scope="") const;
+  Candidate *candidate_(const std::string &node);
+  bool authorized_(const Node &node) const;
+  void public_record_(const Ownership &record);
+  void service_public_();
+  bool public_packet_(const Packet &,const cJSON *);
+  void send_candidate_(Candidate &);
+  bool request_binding_(Candidate &);
+  bool revoke_node_(const std::string &node);
+  std::string ownership_digest_() const;
+  cJSON *binding_web_(const std::string &path,const cJSON *request,int &status);
+  void reject_context_(const Packet &,const cJSON *,const char *reason);
 
   thread_br::ThreadBorderRouter *parent_{nullptr};
   std::string gateway_id_, group_{"ff13::8000:8562"}, address_, registry_error_;

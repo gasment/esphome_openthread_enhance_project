@@ -45,11 +45,11 @@ CONFIG_SCHEMA=cv.All(cv.Schema({
     cv.Required("openthread_id"):cv.use_id(openthread_nrf52.OpenThreadComponent),
     cv.Required("node_id"):identifier,
     cv.Optional("name"):cv.Length(min=1,max=96),
-    cv.Optional("manifest_revision",default=1):cv.int_range(min=1,max=4294967295),
+    cv.Optional("manifest_revision"): cv.invalid("manifest_revision was removed; manifests are fingerprinted automatically"),
     cv.Optional("gateway_id",default=""):cv.Any("",identifier),
     cv.Optional("discovery",default={}):cv.Schema({
-        cv.Optional("multicast_address",default="ff13::8000:8562"):multicast,
-        cv.Optional("port",default=18512):cv.port,
+        cv.Optional("multicast_address"): cv.invalid("Discovery is built in; remove multicast_address"),
+        cv.Optional("port"): cv.invalid("Discovery is built in; remove port"),
     }),
     cv.Optional("heartbeat_interval",default="10s"):cv.positive_time_period_milliseconds,
     cv.Optional("batch_delay",default="100ms"):cv.positive_time_period_milliseconds,
@@ -68,9 +68,8 @@ async def to_code(config):
     ot=await cg.get_variable(config["openthread_id"])
     cg.add(var.set_openthread(ot))
     name=config.get("name",CORE.config["esphome"].get("friendly_name") or CORE.name)
-    cg.add(var.set_node(config["node_id"],name,config["manifest_revision"]))
+    cg.add(var.set_node(config["node_id"],name))
     cg.add(var.set_gateway_id(config["gateway_id"]))
-    cg.add(var.set_discovery(config["discovery"]["multicast_address"],config["discovery"]["port"]))
     cg.add(var.set_timing(config["heartbeat_interval"],config["batch_delay"],config["full_sync_interval"],config["ack"]["timeout"],config["ack"]["resend"]))
     for key in TYPES:
         for ref in config[key]:
@@ -97,5 +96,14 @@ DISCOVERY_ACTION_SCHEMA = automation.maybe_simple_id({
 @automation.register_action("thread_reed_transporter_nrf52.discovery", DiscoveryAction,
                             DISCOVERY_ACTION_SCHEMA, synchronous=True)
 async def discovery_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+# Local recovery when the former gateway is unavailable. Persistence runs in loop().
+UnbindAction = ns.class_("UnbindAction", automation.Action)
+
+@automation.register_action("thread_reed_transporter_nrf52.unbind", UnbindAction,
+                            DISCOVERY_ACTION_SCHEMA, synchronous=True)
+async def unbind_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)

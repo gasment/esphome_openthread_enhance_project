@@ -133,7 +133,8 @@ bool ThreadSedTransporter::open_() {
   }
   return opened_ = success;
 }
-bool ThreadSedTransporter::send_(const otIp6Address &address, uint16_t port, const std::string &payload) {
+bool ThreadSedTransporter::send_(const otIp6Address &address, uint16_t port, const std::string &original) {
+  const auto payload = wire_payload_(original, port);
   if (shutdown_ || !opened_ || payload.empty() || payload.size() > 1232 ||
       !ot_ || !ot_->is_lock_initialized()) return false;
   auto lock = openthread::InstanceLock::try_acquire(0);
@@ -177,9 +178,10 @@ void ThreadSedTransporter::discovery() {
 }
 cJSON *ThreadSedTransporter::envelope_(const char *type) const {
   auto *j = cJSON_CreateObject();
-  cJSON_AddNumberToObject(j, "v", 1); cJSON_AddStringToObject(j, "type", type);
+  cJSON_AddNumberToObject(j, "v", 2); cJSON_AddStringToObject(j, "type", type);
   cJSON_AddStringToObject(j, "node_type", "sed");
   cJSON_AddStringToObject(j, "node", node_.c_str()); cJSON_AddStringToObject(j, "session", session_.c_str());
+  cJSON_AddStringToObject(j,"ctx",context_.empty()?"0000000000000000":context_.c_str());
   return j;
 }
 bool ThreadSedTransporter::ensure_target_() {
@@ -191,14 +193,16 @@ bool ThreadSedTransporter::ensure_target_() {
     querying_ = false;
   }
   confirmed_ = false;
-  if (!open_()) return false;
+  if (!open_() || !refresh_binding_()) return false;
   const uint32_t now = millis();
   if (querying_ && uint32_t(now - query_at_) < discovery_timeout_) return false;
   if (query_attempts_ >= 3) return false;
   query_at_ = now; querying_ = true; request_id_ = random_uint32(); query_attempts_++;
-  auto *j = cJSON_CreateObject();
-  cJSON_AddNumberToObject(j, "v", 1); cJSON_AddStringToObject(j, "type", "discover");
-  cJSON_AddNumberToObject(j, "request_id", request_id_);
+  auto *j = envelope_("discover");
+  binding_.describe(j);
+  cJSON_AddStringToObject(j,"name",name_.c_str());
+  cJSON_AddStringToObject(j,"expected_gateway",expected_gateway_.c_str());
+  cJSON_AddNumberToObject(j,"request_id",request_id_);
   otIp6Address group{};
   if (otIp6AddressFromString(group_.c_str(), &group) == OT_ERROR_NONE) send_(group, discovery_port_, encode(j));
   cJSON_Delete(j); return false;
@@ -223,9 +227,11 @@ bool ThreadSedTransporter::prepare_manifest_() {
     }
     descriptors.push_back(encode(j)); cJSON_Delete(j);
   }
+  manifest_hash_ = thread_transport::manifest_hash(name_, descriptors);
+  if (manifest_hash_.empty()) return false;
   auto pack = [this](const std::vector<std::string> &page, unsigned index, unsigned parts) {
     auto *j = envelope_("manifest");
-    cJSON_AddStringToObject(j, "name", name_.c_str()); cJSON_AddNumberToObject(j, "revision", revision_);
+    cJSON_AddStringToObject(j, "name", name_.c_str()); cJSON_AddStringToObject(j, "manifest_hash", manifest_hash_.c_str());
     cJSON_AddNumberToObject(j, "part", index); cJSON_AddNumberToObject(j, "parts", parts);
     auto *a = cJSON_AddArrayToObject(j, "entities");
     for (const auto &d : page) cJSON_AddItemToArray(a, cJSON_Parse(d.c_str()));
@@ -261,7 +267,9 @@ void ThreadSedTransporter::service_manifest_() {
 }
 void ThreadSedTransporter::process_(const Packet &p) {
   auto *j = cJSON_ParseWithLengthOpts(p.data, p.size + 1, nullptr, true);
-  if (!cJSON_IsObject(j) || !uint_value(item(j, "v"), 1, 1)) { cJSON_Delete(j); return; }
+  if (!cJSON_IsObject(j) || !uint_value(item(j, "v"), 2, 2)) { cJSON_Delete(j); return; }
+ if(process_binding_(p,j)){cJSON_Delete(j);return;}
+ if(thread_transport::text(j,"type")!="offer" && thread_transport::text(j,"ctx")!=context_){cJSON_Delete(j);return;}
   const std::string type = str(j, "type");
   if (type == "offer") {
     const std::string gateway = str(j, "gateway_id"), address = str(j, "address");
@@ -296,12 +304,13 @@ void ThreadSedTransporter::process_(const Packet &p) {
       str(j, "node") != node_ || str(j, "session") != session_ || str(j, "gateway_id") != retained.gateway) {
     cJSON_Delete(j); return;
   }
-  if (type == "manifest_request") {
+  if(type=="presence_ack"){last_gateway_reply_=millis();renew_target_();}
+  else if (type == "manifest_request") {
     // Already validated the current gateway endpoint, node ID and boot session.
     confirmed_ = false; manifest_attempts_ = 0;
     request_full_sync_(); retain();
     ESP_LOGD(TAG, "Gateway requested a fresh manifest");
-  } else if (type == "manifest_ack" && uint_value(item(j, "revision"), revision_, revision_)) {
+  } else if (type == "manifest_ack" && thread_transport::text(j,"manifest_hash") == manifest_hash_) {
     if (cJSON_IsTrue(item(j, "accepted")) && cJSON_IsTrue(item(j, "complete"))) {
       if (!confirmed_) presence_dirty_ = true;
       confirmed_ = true;
@@ -663,8 +672,8 @@ void ThreadSedTransporter::presence_(bool ready, bool sleeping) {
   if (!confirmed_ || !target_valid_()) return;
   auto *j = envelope_("presence");
   // Solicit a bounded heartbeat reply without sending another full manifest.
-  cJSON_AddBoolToObject(j, "check_manifest", true);
-  cJSON_AddNumberToObject(j, "revision", revision_);
+  cJSON_AddBoolToObject(j, "check_manifest", !confirmed_);
+  if(!confirmed_)cJSON_AddStringToObject(j, "manifest_hash", manifest_hash_.c_str());
   cJSON_AddBoolToObject(j,"control_ready",ready);
   if (sleeping) cJSON_AddBoolToObject(j,"sleeping",true);
   if (send_(retained.address,retained.port,encode(j))) { heartbeat_at_ = millis(); presence_dirty_ = false; }
@@ -698,6 +707,7 @@ void ThreadSedTransporter::service_presence_() {
     presence_(ready);
 }
 void ThreadSedTransporter::loop() {
+  if(!shutdown_ && !is_failed() && ot_ && ot_->is_connected()) refresh_binding_();
   service_results_();
   if (is_failed() || shutdown_) {
     if (reporting_) { summary_.errors++; finish_(); }
@@ -772,4 +782,58 @@ void ThreadSedTransporter::command_(const cJSON *j) {
   send_(retained.address,retained.port,wire);
 }
 
+
+std::string ThreadSedTransporter::wire_payload_(const std::string &payload,uint16_t port) const {
+  auto *j=cJSON_Parse(payload.c_str());if(!j)return "";
+  if(port!=thread_transport::PUBLIC_PORT) {
+    if(context_.empty()){cJSON_Delete(j);return "";}
+    cJSON_DeleteItemFromObjectCaseSensitive(j,"ctx");cJSON_AddStringToObject(j,"ctx",context_.c_str());
+  }
+  auto out=thread_transport::encode(j);cJSON_Delete(j);return out;
+}
+bool ThreadSedTransporter::refresh_binding_() {
+  if(!ot_||!ot_->is_lock_initialized()||!ot_->is_connected())return false;
+  auto lock=openthread::InstanceLock::try_acquire(0);if(!lock||!lock.get_instance())return false;
+  bool changed=false;if(!binding_.refresh(lock.get_instance(),node_,changed)){context_.clear();confirmed_=false;return false;}
+  if(unbind_requested_) {
+    if(binding_.data.owner[0]){if(!binding_.revoke(lock.get_instance(),binding_.data.token))return false;changed=true;}
+    unbind_requested_=false;
+  }
+  if(changed){discovery_active_=true;discovery_started_=millis();context_.clear();retained.expires=0;confirmed_=false;querying_=false;query_attempts_=0;manifest_attempts_=0;manifest_.clear();commands_.clear();request_full_sync_();}
+  return true;
+}
+bool ThreadSedTransporter::process_binding_(const Packet &p,cJSON *j) {
+  using namespace thread_transport;
+  const auto type=thread_transport::text(j,"type");
+  if(type=="binding_revoked"||type=="context_expired") {
+    if(thread_transport::text(j,"network")!=binding_.data.network||thread_transport::text(j,"device")!=binding_.data.device||
+       thread_transport::text(j,"binding_id")!=binding_.data.token||thread_transport::text(j,"owner")!=binding_.data.owner)return true;
+    if(type=="context_expired"){context_.clear();retained.expires=0;confirmed_=false;querying_=false;query_attempts_=0;manifest_attempts_=0;return true;}
+    bool ok=false;{auto lock=openthread::InstanceLock::try_acquire(0);if(lock&&lock.get_instance())ok=binding_.revoke(lock.get_instance(),thread_transport::text(j,"binding_id"));}
+    if(ok){discovery_active_=true;discovery_started_=millis();context_.clear();retained.expires=0;confirmed_=false;querying_=false;query_attempts_=0;manifest_attempts_=0;manifest_.clear();commands_.clear();request_full_sync_();}
+    return true;
+  }
+  if(type!="bind_request"&&type!="offer")return p.port==PUBLIC_PORT;
+  const auto owner=thread_transport::text(j,"gateway_id"),token=thread_transport::text(j,"binding_id"),ctx=thread_transport::text(j,"ctx");
+  const auto *req=thread_transport::field(j,"request_id");otIp6Address address{};
+  if(p.port!=PUBLIC_PORT||!thread_transport::uint32(thread_transport::field(j,"port"))||thread_transport::field(j,"port")->valuedouble<1||thread_transport::field(j,"port")->valuedouble>65535||thread_transport::field(j,"port")->valuedouble==PUBLIC_PORT||
+     !thread_transport::uint32(thread_transport::field(j,"ttl_s"))||thread_transport::field(j,"ttl_s")->valuedouble<1||thread_transport::field(j,"ttl_s")->valuedouble>86400||
+     owner.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos||!thread_transport::hex_id(token,32)||!thread_transport::hex_id(ctx,16)||owner.empty()||owner.size()>32||
+     thread_transport::text(j,"network")!=binding_.data.network||thread_transport::text(j,"device")!=binding_.data.device||
+     thread_transport::text(j,"node")!=node_||thread_transport::text(j,"session")!=session_||!thread_transport::uint32(req)||
+     (!expected_gateway_.empty()&&owner!=expected_gateway_)||
+     otIp6AddressFromString(thread_transport::text(j,"address").c_str(),&address)!=OT_ERROR_NONE||std::memcmp(&address,&p.peer,sizeof(address)))return true;
+  bool duplicate=type=="bind_request"&&owner==binding_.data.owner&&token==binding_.data.token&&ctx==context_;
+  if(!duplicate&&(!querying_||uint32_t(req->valuedouble)!=request_id_))return true;
+  if(type=="bind_request") {
+    bool ok=false;{auto lock=openthread::InstanceLock::try_acquire(0);if(lock&&lock.get_instance())ok=binding_.bind(lock.get_instance(),owner,token);}
+    auto *ack=envelope_(ok?"bind_ack":"binding_rejected");binding_.describe(ack);
+    cJSON_AddNumberToObject(ack,"request_id",req->valuedouble);cJSON_DeleteItemFromObjectCaseSensitive(ack,"ctx");cJSON_AddStringToObject(ack,"ctx",ctx.c_str());
+    send_(p.peer,p.port,thread_transport::encode(ack));cJSON_Delete(ack);
+    if(!ok||duplicate)return true;
+    cJSON_ReplaceItemInObjectCaseSensitive(j,"type",cJSON_CreateString("offer"));
+  } else if(owner!=binding_.data.owner||token!=binding_.data.token)return true;
+  if(context_!=ctx){commands_.clear();context_=ctx;manifest_.clear();prepare_manifest_();}
+  return false; // The existing offer path installs address/port/TTL, then synchronizes the manifest.
+}
 }  // namespace esphome::thread_sed_transporter

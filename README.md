@@ -1,4 +1,6 @@
 <!-- ---
+
+Thread Gateway 与四类 Transporter 已升级到不兼容 v1 的公共发现/绑定协议，参见 [逻辑变更与带注释 YAML diff](TRANSPORT_V2_CHANGELOG.md)。
 # https://vitepress.dev/reference/default-theme-home-page
 layout: home
 

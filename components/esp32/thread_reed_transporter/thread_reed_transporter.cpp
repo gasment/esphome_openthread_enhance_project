@@ -49,7 +49,8 @@ bool ThreadReedTransporter::open_() {
   esp_openthread_lock_release();
   return opened_ = success;
 }
-bool ThreadReedTransporter::send_(const otIp6Address &address, uint16_t port, const std::string &payload) {
+bool ThreadReedTransporter::send_(const otIp6Address &address, uint16_t port, const std::string &original) {
+  const auto payload = wire_payload_(original, port);
   if (shutdown_ || !opened_ || payload.empty() || payload.size() > 1232 ||
       !ot_->is_lock_initialized() || !esp_openthread_lock_acquire(0)) return false;
   auto *instance = esp_openthread_get_instance();
@@ -69,11 +70,12 @@ bool ThreadReedTransporter::send_(const otIp6Address &address, uint16_t port, co
 }
 
 cJSON *ThreadReedTransporter::envelope_(const char *type) const {
- auto *j=cJSON_CreateObject();cJSON_AddNumberToObject(j,"v",1);cJSON_AddStringToObject(j,"type",type);
+ auto *j=cJSON_CreateObject();cJSON_AddNumberToObject(j,"v",2);cJSON_AddStringToObject(j,"type",type);
  cJSON_AddStringToObject(j,"node",node_.c_str());cJSON_AddStringToObject(j,"session",session_.c_str());
  cJSON_AddStringToObject(j,"name",name_.c_str());cJSON_AddStringToObject(j,"node_type","reed");
  cJSON_AddNumberToObject(j,"heartbeat_interval_ms",heartbeat_ms_);
- cJSON_AddBoolToObject(j,"control_ready",true);return j;
+ cJSON_AddBoolToObject(j,"control_ready",true);cJSON_AddStringToObject(j,"ctx",context_.empty()?"0000000000000000":context_.c_str());
+  return j;
 }
 void ThreadReedTransporter::request_full_sync_() {
  // A receipt for an older snapshot must not clear a new synchronization request.
@@ -101,11 +103,13 @@ void ThreadReedTransporter::discover_() {
  if(querying_ && uint32_t(millis()-query_at_)<3000)return;
  querying_=true;query_at_=millis();request_=esp_random();otIp6Address group{};
  otIp6AddressFromString(group_.c_str(),&group);
- auto *j=cJSON_CreateObject();cJSON_AddNumberToObject(j,"v",1);cJSON_AddStringToObject(j,"type","discover");cJSON_AddNumberToObject(j,"request_id",request_);
+ if(!refresh_binding_())return;
+ auto *j=envelope_("discover");binding_.describe(j);
+ cJSON_AddStringToObject(j,"expected_gateway",expected_gateway_.c_str());cJSON_AddNumberToObject(j,"request_id",request_);
  send_(group,discovery_port_,encode(j));cJSON_Delete(j);
 }
 void ThreadReedTransporter::presence_() {
- auto *j=envelope_("presence");cJSON_AddNumberToObject(j,"revision",revision_);cJSON_AddBoolToObject(j,"check_manifest",true);
+ auto *j=envelope_("presence");if(!confirmed_)cJSON_AddStringToObject(j,"manifest_hash",manifest_hash_.c_str());cJSON_AddBoolToObject(j,"check_manifest",!confirmed_);
  if (send_(peer_, port_, encode(j))) {
   heartbeat_at_ = millis();
  }
@@ -123,8 +127,10 @@ bool ThreadReedTransporter::manifest_() {
   if(string(j,"name").size()>96){ESP_LOGE(TAG,"Entity name exceeds 96 UTF-8 bytes: %s",e.endpoint.id.c_str());cJSON_Delete(j);return false;}
   descriptors.push_back(encode(j));cJSON_Delete(j);
  }
+ manifest_hash_=thread_transport::manifest_hash(name_,descriptors);
+ if(manifest_hash_.empty())return false;
  auto pack=[this](const std::vector<std::string> &page,unsigned part,unsigned parts){
-  auto *j=envelope_("manifest");cJSON_AddNumberToObject(j,"revision",revision_);cJSON_AddNumberToObject(j,"part",part);cJSON_AddNumberToObject(j,"parts",parts);
+  auto *j=envelope_("manifest");cJSON_AddStringToObject(j,"manifest_hash",manifest_hash_.c_str());cJSON_AddNumberToObject(j,"part",part);cJSON_AddNumberToObject(j,"parts",parts);
   auto *a=cJSON_AddArrayToObject(j,"entities");for(auto &d:page)cJSON_AddItemToArray(a,cJSON_Parse(d.c_str()));auto payload=encode(j);cJSON_Delete(j);return payload;
  };
  std::vector<std::vector<std::string>> pages(1);
@@ -140,7 +146,9 @@ bool ThreadReedTransporter::manifest_() {
 }
 void ThreadReedTransporter::process_(const Packet &p) {
  auto *j=cJSON_ParseWithLengthOpts(p.data,p.size+1,nullptr,true);
- if(!cJSON_IsObject(j)||!integer(field(j,"v"),1,1)){cJSON_Delete(j);return;}
+ if(!cJSON_IsObject(j)||!integer(field(j,"v"),2,2)){cJSON_Delete(j);return;}
+ if(process_binding_(p,j)){cJSON_Delete(j);return;}
+ if(thread_transport::text(j,"type")!="offer" && thread_transport::text(j,"ctx")!=context_){cJSON_Delete(j);return;}
  const auto type=string(j,"type");
  if(type=="offer") {
   auto gateway=string(j,"gateway_id");otIp6Address address{};
@@ -151,14 +159,15 @@ void ThreadReedTransporter::process_(const Packet &p) {
     if(gateway_!=gateway)results_.clear();
     gateway_=gateway;peer_=address;port_=field(j,"port")->valuedouble;ttl_ms_=uint32_t(field(j,"ttl_s")->valuedouble)*1000;
     target_at_=last_reply_=millis();target_=true;querying_=false;confirmed_=false;check_pending_=true;presence_();
-    ESP_LOGI(TAG,"Gateway %s discovered; checking manifest revision %u",gateway_.c_str(),unsigned(revision_));
+    ESP_LOGI(TAG,"Gateway %s discovered; checking manifest %s",gateway_.c_str(),manifest_hash_.c_str());
   }
   cJSON_Delete(j);return;
  }
  if(!target_||p.port!=port_||memcmp(&p.peer,&peer_,sizeof(peer_))||string(j,"gateway_id")!=gateway_||string(j,"node")!=node_||string(j,"session")!=session_){cJSON_Delete(j);return;}
  last_reply_=millis();
- if(type=="manifest_request") {confirmed_=false;check_pending_=false;manifest_at_=millis()-1000;manifest_next_=0;}
- else if(type=="manifest_ack" && integer(field(j,"revision"),revision_,revision_)) {
+ if(type=="presence_ack"){target_at_=millis();}
+ else if(type=="manifest_request") {confirmed_=false;check_pending_=false;manifest_at_=millis()-1000;manifest_next_=0;}
+ else if(type=="manifest_ack" && thread_transport::text(j,"manifest_hash")==manifest_hash_) {
   if(cJSON_IsTrue(field(j,"accepted"))&&cJSON_IsTrue(field(j,"complete"))) {
    if (!confirmed_ || cJSON_IsTrue(field(j, "request_state"))) {
     request_full_sync_();
@@ -235,6 +244,7 @@ void ThreadReedTransporter::command_(const cJSON *j) {
  send_(peer_, port_, payload);
 }
 void ThreadReedTransporter::loop() {
+  if(!shutdown_ && !is_failed() && ot_ && ot_->is_connected()) refresh_binding_();
  if(shutdown_||is_failed())return;
  Packet *p;for(unsigned k=0;k<6&&xQueueReceive(queue_,&p,0)==pdTRUE;k++){process_(*p);delete p;}
  if(!open_())return;
@@ -294,6 +304,60 @@ void ThreadReedTransporter::on_shutdown() {
  }
 }
 void ThreadReedTransporter::dump_config() {
- ESP_LOGCONFIG(TAG,"Thread UDP transporter '%s': %u existing entities, manifest revision %u",node_.c_str(),unsigned(entries_.size()),unsigned(revision_));
+ ESP_LOGCONFIG(TAG,"Thread UDP transporter '%s': %u existing entities, manifest %s",node_.c_str(),unsigned(entries_.size()),manifest_hash_.c_str());
+}
+
+std::string ThreadReedTransporter::wire_payload_(const std::string &payload,uint16_t port) const {
+  auto *j=cJSON_Parse(payload.c_str());if(!j)return "";
+  if(port!=thread_transport::PUBLIC_PORT) {
+    if(context_.empty()){cJSON_Delete(j);return "";}
+    cJSON_DeleteItemFromObjectCaseSensitive(j,"ctx");cJSON_AddStringToObject(j,"ctx",context_.c_str());
+  }
+  auto out=thread_transport::encode(j);cJSON_Delete(j);return out;
+}
+bool ThreadReedTransporter::refresh_binding_() {
+  if(!ot_||!ot_->is_lock_initialized()||!ot_->is_connected())return false;
+  auto lock=openthread::InstanceLock::try_acquire(0);if(!lock||!lock.get_instance())return false;
+  bool changed=false;if(!binding_.refresh(lock.get_instance(),node_,changed)){context_.clear();confirmed_=false;return false;}
+  if(unbind_requested_) {
+    if(binding_.data.owner[0]){if(!binding_.revoke(lock.get_instance(),binding_.data.token))return false;changed=true;}
+    unbind_requested_=false;
+  }
+  if(changed){context_.clear();invalidate_();manifest_pages_.clear();results_.clear();}
+  return true;
+}
+bool ThreadReedTransporter::process_binding_(const Packet &p,cJSON *j) {
+  using namespace thread_transport;
+  const auto type=thread_transport::text(j,"type");
+  if(type=="binding_revoked"||type=="context_expired") {
+    if(thread_transport::text(j,"network")!=binding_.data.network||thread_transport::text(j,"device")!=binding_.data.device||
+       thread_transport::text(j,"binding_id")!=binding_.data.token||thread_transport::text(j,"owner")!=binding_.data.owner)return true;
+    if(type=="context_expired"){context_.clear();invalidate_(true);return true;}
+    bool ok=false;{auto lock=openthread::InstanceLock::try_acquire(0);if(lock&&lock.get_instance())ok=binding_.revoke(lock.get_instance(),thread_transport::text(j,"binding_id"));}
+    if(ok){context_.clear();invalidate_();manifest_pages_.clear();results_.clear();}
+    return true;
+  }
+  if(type!="bind_request"&&type!="offer")return p.port==PUBLIC_PORT;
+  const auto owner=thread_transport::text(j,"gateway_id"),token=thread_transport::text(j,"binding_id"),ctx=thread_transport::text(j,"ctx");
+  const auto *req=thread_transport::field(j,"request_id");otIp6Address address{};
+  if(p.port!=PUBLIC_PORT||!thread_transport::uint32(thread_transport::field(j,"port"))||thread_transport::field(j,"port")->valuedouble<1||thread_transport::field(j,"port")->valuedouble>65535||thread_transport::field(j,"port")->valuedouble==PUBLIC_PORT||
+     !thread_transport::uint32(thread_transport::field(j,"ttl_s"))||thread_transport::field(j,"ttl_s")->valuedouble<1||thread_transport::field(j,"ttl_s")->valuedouble>86400||
+     owner.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos||!thread_transport::hex_id(token,32)||!thread_transport::hex_id(ctx,16)||owner.empty()||owner.size()>32||
+     thread_transport::text(j,"network")!=binding_.data.network||thread_transport::text(j,"device")!=binding_.data.device||
+     thread_transport::text(j,"node")!=node_||thread_transport::text(j,"session")!=session_||!thread_transport::uint32(req)||
+     (!expected_gateway_.empty()&&owner!=expected_gateway_)||
+     otIp6AddressFromString(thread_transport::text(j,"address").c_str(),&address)!=OT_ERROR_NONE||std::memcmp(&address,&p.peer,sizeof(address)))return true;
+  bool duplicate=type=="bind_request"&&owner==binding_.data.owner&&token==binding_.data.token&&ctx==context_;
+  if(!duplicate&&(!querying_||uint32_t(req->valuedouble)!=request_))return true;
+  if(type=="bind_request") {
+    bool ok=false;{auto lock=openthread::InstanceLock::try_acquire(0);if(lock&&lock.get_instance())ok=binding_.bind(lock.get_instance(),owner,token);}
+    auto *ack=envelope_(ok?"bind_ack":"binding_rejected");binding_.describe(ack);
+    cJSON_AddNumberToObject(ack,"request_id",req->valuedouble);cJSON_DeleteItemFromObjectCaseSensitive(ack,"ctx");cJSON_AddStringToObject(ack,"ctx",ctx.c_str());
+    send_(p.peer,p.port,thread_transport::encode(ack));cJSON_Delete(ack);
+    if(!ok||duplicate)return true;
+    cJSON_ReplaceItemInObjectCaseSensitive(j,"type",cJSON_CreateString("offer"));
+  } else if(owner!=binding_.data.owner||token!=binding_.data.token)return true;
+  if(context_!=ctx){results_.clear();context_=ctx;manifest_pages_.clear();manifest_();}
+  return false; // The existing offer path installs address/port/TTL, then synchronizes the manifest.
 }
 }

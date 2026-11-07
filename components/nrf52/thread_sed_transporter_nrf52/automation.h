@@ -101,4 +101,12 @@ template<typename... Ts> class DiscoveryAction : public Action<Ts...> {
   ThreadSedTransporter *parent_;
 };
 
+template<typename... Ts> class UnbindAction : public Action<Ts...> {
+ public:
+  explicit UnbindAction(ThreadSedTransporter *parent) : parent_(parent) {}
+  void play(const Ts &...x) override { parent_->unbind(); }
+ protected:
+  ThreadSedTransporter *parent_;
+};
+
 }  // namespace esphome::thread_sed_transporter_nrf52
