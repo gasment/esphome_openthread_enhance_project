@@ -33,7 +33,12 @@ bool ThreadGateway::authorized_(const Node &node) const {
   const auto *r=owner_(node.id);return ledger_ready_&&node.network==network_&&r&&r->owner==gateway_id_&&!revoked_(r->token);
 }
 ThreadGateway::Candidate *ThreadGateway::candidate_(const std::string &node) {
-  for(auto &c:candidates_)if(c.node==node)return &c;return nullptr;
+  for (auto &c : candidates_) {
+    if (c.node == node) {
+      return &c;
+    }
+  }
+  return nullptr;
 }
 void ThreadGateway::load_ownership_() {
   nvs_handle_t nvs;auto err=nvs_open("thread_bind_v2",NVS_READONLY,&nvs);
@@ -111,7 +116,15 @@ bool ThreadGateway::request_binding_(Candidate &c) {
   for(const auto &r:ownership_)if(r.network==network_&&r.device==c.device&&r.owner==gateway_id_&&r.state=="pending") {if(c.token!=r.token)c.context.clear();c.token=r.token;c.requested=true;return true;}
   auto token=thread_transport::nonce();if(token.empty())return false;
   Ownership r{network_,c.device,c.node,c.name,c.node_type,gateway_id_,token,"pending",c.generation};
-  if(!merge_ownership_(r))return false;if(c.token!=token)c.context.clear();c.token=token;c.requested=true;return true;
+  if (!merge_ownership_(r)) {
+    return false;
+  }
+  if (c.token != token) {
+    c.context.clear();
+  }
+  c.token = token;
+  c.requested = true;
+  return true;
 }
 void ThreadGateway::send_candidate_(Candidate &c) {
   if(address_.empty()||c.session.empty()||c.port==0)return;
@@ -179,7 +192,14 @@ bool ThreadGateway::public_packet_(const Packet &p,const cJSON *j) {
     }
     if(text(j,"owner")!=gateway_id_||text(j,"binding_id")!=c->token||!thread_transport::uint32(field(j,"generation")))return false;
     Ownership r{network_,c->device,c->node,c->name,c->node_type,gateway_id_,c->token,"active",uint32_t(field(j,"generation")->valuedouble)};
-    if(!merge_ownership_(r))return false;c->owner=gateway_id_;c->generation=r.generation;c->requested=false;public_record_(r);return true;
+    if (!merge_ownership_(r)) {
+      return false;
+    }
+    c->owner = gateway_id_;
+    c->generation = r.generation;
+    c->requested = false;
+    public_record_(r);
+    return true;
   }
   if(type!="discover")return false;
   const auto node=text(j,"node"),dev=text(j,"device"),session=text(j,"session"),owner=text(j,"owner"),token=text(j,"binding_id"),expected=text(j,"expected_gateway");
@@ -197,7 +217,11 @@ bool ThreadGateway::public_packet_(const Packet &p,const cJSON *j) {
   c->manual_required=cJSON_IsTrue(field(j,"manual_required"));c->generation=field(j,"generation")->valuedouble;
   c->request=field(j,"request_id")->valuedouble;c->address=p.address;c->port=p.port;c->seen_at=millis();
   if(!owner.empty()) {
-    if(c->token!=token)c->context.clear();c->token=token;c->requested=false;
+    if (c->token != token) {
+      c->context.clear();
+    }
+    c->token = token;
+    c->requested = false;
     if(revoked_(token)) {
       const Ownership *rev=nullptr;for(const auto &r:ownership_)if(r.token==token&&r.state=="revoked")rev=&r;
       if(rev){auto *out=cJSON_CreateObject();cJSON_AddNumberToObject(out,"v",2);cJSON_AddStringToObject(out,"type","binding_revoked");

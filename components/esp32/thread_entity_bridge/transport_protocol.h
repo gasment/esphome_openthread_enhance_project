@@ -41,7 +41,10 @@ inline std::string nonce() {
 }
 inline std::string network(otInstance *ot) {
   char out[17];const auto *pan=otThreadGetExtendedPanId(ot);
-  for(unsigned i=0;i<8;i++)snprintf(out+2*i,3,"%02x",pan->m8[i]);return out;
+  for (unsigned i = 0; i < 8; i++) {
+    snprintf(out + 2 * i, 3, "%02x", pan->m8[i]);
+  }
+  return out;
 }
 inline std::string device(otInstance *ot) {
   otExtAddress address{};otLinkGetFactoryAssignedIeeeEui64(ot,&address);
@@ -89,7 +92,12 @@ inline std::string canonical(const cJSON *j,unsigned depth=0) {
     std::string out="{";const char *previous=nullptr;
     for(auto *p:fields) {
       if(previous&&std::strcmp(previous,p->string)==0)return "";
-      if(previous)out+=',';auto *key=cJSON_CreateString(p->string);out+=encode(key);cJSON_Delete(key);
+      if (previous) {
+        out += ',';
+      }
+      auto *key = cJSON_CreateString(p->string);
+      out += encode(key);
+      cJSON_Delete(key);
       auto value=canonical(p,depth+1);if(value.empty())return "";out+=':';out+=value;previous=p->string;
     }return out+'}';
   }
@@ -123,7 +131,10 @@ class Binding {
     // The Zephyr backend preserves all 16 key bits. 0x8001 belongs to Joiner rollback.
     ok=otPlatSettingsSet(ot,0x8002,reinterpret_cast<const uint8_t *>(&next),sizeof(next))==OT_ERROR_NONE;
 #endif
-    if(ok)data=next;return ok;
+    if (ok) {
+      data = next;
+    }
+    return ok;
   }
   bool refresh(otInstance *ot,const std::string &node,bool &changed) {
     changed=false;if(!ot||otThreadGetDeviceRole(ot)<OT_DEVICE_ROLE_CHILD)return false;
@@ -144,15 +155,25 @@ class Binding {
     const auto net=network(ot),dev=device(ot);
     if(net!=data.network||dev!=data.device||node!=data.node) {
       BindingData next{};next.generation=data.generation;
-      if(next.generation==UINT32_MAX)return false;++next.generation;
+      if (next.generation == UINT32_MAX) {
+        return false;
+      }
+      ++next.generation;
       snprintf(next.network,sizeof(next.network),"%s",net.c_str());snprintf(next.device,sizeof(next.device),"%s",dev.c_str());snprintf(next.node,sizeof(next.node),"%s",node.c_str());
-      if(!store(ot,next))return false;changed=true;
+      if (!store(ot, next)) {
+        return false;
+      }
+      changed = true;
     }return true;
   }
   bool bind(otInstance *ot,const std::string &owner,const std::string &token) {
     if(owner.empty()||owner.size()>32||!hex_id(token,32))return false;
     if(data.owner[0])return owner==data.owner&&token==data.token;
-    if(data.generation==UINT32_MAX)return false;auto next=data;++next.generation;
+    if (data.generation == UINT32_MAX) {
+      return false;
+    }
+    auto next = data;
+    ++next.generation;
     snprintf(next.owner,sizeof(next.owner),"%s",owner.c_str());snprintf(next.token,sizeof(next.token),"%s",token.c_str());next.manual_required=0;return store(ot,next);
   }
   bool revoke(otInstance *ot,const std::string &token) {
