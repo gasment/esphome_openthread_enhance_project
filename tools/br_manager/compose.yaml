@@ -1,0 +1,10 @@
+services:
+  br-manager:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      BR_ADMIN_USER: "admin"
+      BR_ADMIN_PASSWORD: "replace-with-a-long-random-password"
+    volumes:
+      - ./data:/data
