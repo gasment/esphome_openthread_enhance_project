@@ -122,6 +122,16 @@ void JoinerManager::native_done_(otError error, void *context) {
 }
 
 void JoinerManager::attempt_(otInstance *instance) {
+  // Joiner discovery uses the current MAC PAN ID as its destination filter.
+  // Reset it for every attempt, including retries after selecting a candidate,
+  // so a stored/previous PAN cannot restrict commissioning to the old network.
+  // This API clears live Active/Pending Datasets; the verified rollback journal
+  // was saved before entering this method and remains until commit/restore.
+  if (otLinkSetPanId(instance, 0xffff) != OT_ERROR_NONE) {
+    fail_("cannot_reset_discovery_pan_id");
+    return;
+  }
+  ESP_LOGD(TAG, "Starting Joiner discovery across all PAN IDs");
   if (!advertise_(instance)) { fail_("cannot_set_joiner_advertisement"); return; }
   result_ = -1;
   const auto error = otJoinerStart(instance, pskd_.c_str(), nullptr, "ESPHome", nullptr, nullptr, nullptr, native_done_, this);
