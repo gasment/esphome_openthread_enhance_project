@@ -1,4 +1,6 @@
 <!-- ---
+
+Thread Gateway 与四类 Transporter 已升级到不兼容 v1 的公共发现/绑定协议，参见 [逻辑变更与带注释 YAML diff](TRANSPORT_V2_CHANGELOG.md)。
 # https://vitepress.dev/reference/default-theme-home-page
 layout: home
 
@@ -42,6 +44,7 @@ features:
 |Thread节点-网关模式|✅ESP32 ✅nRF52|接入Thread网络并通过Thread网关代理HA实体|
 |Thread节点-P2P|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
 |Thread节点-访问LAN/WAN|✅ESP32 ❌nRF52|Thread节点可访问外部网络资源|
+|BR Web 管理台| ✅Docker✅Python|自动发现并集中登录局域网内的BR|
 
 
 ## nRF52平台额外功能

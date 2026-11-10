@@ -1,5 +1,9 @@
 # thread_sed_transporter_nrf52
 
+> **协议 v2（破坏性更新）**：配置和接入逻辑以根目录 [更新日志与 YAML diff](../../../TRANSPORT_V2_CHANGELOG.md) 为准。
+> 下文原 v1 报文/旧发现配置及手工 revision 说明保留作历史参考，不适用于当前实现。
+
+
 nRF52/Zephyr MTD 的事件驱动实体发送组件，配合 ESP32 `thread_gateway` 使用。
 依赖 `openthread_nrf52` 和自动加载的 `thread_entity_bridge_nrf52`，可选关联
 `deep_sleep_nrf52`。显式 external_components 列表需同时包含实体桥。

@@ -1,4 +1,5 @@
 #pragma once
+#include "esphome/components/thread_entity_bridge/transport_protocol.h"
 #include "esphome/core/defines.h"
 
 #include <vector>
@@ -140,6 +141,7 @@ class ThreadSedTransporter : public Component {
            target_valid_() && uint32_t(millis() - last_gateway_reply_) < heartbeat_ms_ * 3;
   }
   void discovery();
+  void unbind() { unbind_requested_=true; }
   void setup() override;
   void loop() override;
   using ResultCallback = std::function<void(bool, uint32_t)>;
@@ -160,11 +162,11 @@ class ThreadSedTransporter : public Component {
   void on_shutdown() override;
   float get_setup_priority() const override { return setup_priority::LATE; }
   void set_openthread(openthread::OpenThreadComponent *ot) { ot_ = ot; }
-  void set_node(const std::string &id, const std::string &name, uint32_t revision) {
-    node_ = id; name_ = name; revision_ = revision;
+  void set_node(const std::string &id, const std::string &name) {
+    node_ = id; name_ = name;
   }
-  void set_discovery(const std::string &id, const std::string &group, uint16_t port, uint32_t timeout) {
-    expected_gateway_ = id; group_ = group; discovery_port_ = port; discovery_timeout_ = timeout;
+  void set_discovery(const std::string &id, uint32_t timeout) {
+    expected_gateway_ = id; discovery_timeout_ = timeout;
   }
   void set_timing(uint32_t timeout, uint32_t heartbeat) { timeout_ms_ = timeout; heartbeat_ms_ = heartbeat;
   }
@@ -237,6 +239,13 @@ class ThreadSedTransporter : public Component {
     std::function<bool(const cJSON *)> execute;
   };
   struct Packet { otIp6Address peer; uint16_t port; size_t size; char data[1233]; };
+  thread_transport::Binding binding_;
+  bool unbind_requested_{false};
+  std::string context_, manifest_hash_;
+  bool refresh_binding_();
+  bool process_binding_(const Packet &, cJSON *);
+  std::string wire_payload_(const std::string &, uint16_t) const;
+
   struct CompletedCommand { uint32_t id; std::string response; };
   struct Commit {
     ReportEntry *entry;
@@ -299,7 +308,7 @@ class ThreadSedTransporter : public Component {
   std::atomic<bool> shutdown_{false};
   std::atomic<uint32_t> drops_{0};
   std::string node_, name_, session_, expected_gateway_, group_{"ff13::8000:8562"};
-  uint32_t revision_{1}, sequence_{0}, request_id_{0};
+  uint32_t  sequence_{0}, request_id_{0};
   uint16_t discovery_port_{18512};
   uint32_t discovery_timeout_{1000}, timeout_ms_{5000}, heartbeat_ms_{10000};
   uint32_t started_{0}, query_at_{0}, manifest_at_{0}, heartbeat_at_{0};

@@ -3,7 +3,11 @@
 #include <cstdio>
 
 #include "esphome/core/log.h"
+#ifdef USE_THREAD_BR_WIFI
 #include "esphome/components/wifi/wifi_component.h"
+#else
+#include "esphome/components/ethernet/ethernet_component.h"
+#endif
 #ifdef CONFIG_THREAD_BR_WEB
 #ifdef USE_API
 #include "esphome/components/api/api_server.h"
@@ -13,21 +17,27 @@
 #endif
 #endif
 #include "driver/gpio.h"
+#ifdef USE_THREAD_BR_UART_RCP
 #include "driver/uart.h"
 #include "esp_coexist.h"
+#endif
 #include "esp_netif.h"
 #include "esp_openthread.h"
 #include "esp_openthread_border_router.h"
 #include "esp_openthread_lock.h"
 #include "esp_openthread_netif_glue.h"
+#ifdef USE_THREAD_BR_UART_RCP
 #include "esp_openthread_spinel.h"
+#endif
 #include "esp_vfs_eventfd.h"
 #ifdef CONFIG_THREAD_BR_WEB
 #include "thread_br_web.h"
 #include "thread_br_ha.h"
 #include "br_web_memory.h"
 #endif
+#ifdef USE_THREAD_BR_UART_RCP
 #include "rcp_led_bridge.h"
+#endif
 #include "esp_timer.h"
 #include "openthread/dataset.h"
 #include "openthread/error.h"
@@ -41,6 +51,21 @@
 
 namespace esphome::thread_br {
 namespace {
+esp_netif_t *backbone_netif() {
+#ifdef USE_THREAD_BR_WIFI
+  return esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+#else
+  auto *eth = ethernet::global_eth_component;
+  return eth ? eth->get_esp_netif() : nullptr;
+#endif
+}
+bool backbone_connected() {
+#ifdef USE_THREAD_BR_WIFI
+  return wifi::global_wifi_component && wifi::global_wifi_component->is_connected();
+#else
+  return ethernet::global_eth_component && ethernet::global_eth_component->is_connected();
+#endif
+}
 // Identity diagnostics are part of the core BR, independent of Web/HA JSON.
 void format_identity(char *out, const uint8_t *pan, const uint8_t *ext, uint16_t rloc) {
   static const char hex[] = "0123456789abcdef";
@@ -85,7 +110,7 @@ void ThreadBorderRouter::loop() {
 #ifdef CONFIG_THREAD_BR_COMMISSIONER_WEB
   commissioner_.loop(state == State::READY);
 #endif
-  if (state == State::WAITING) {
+  if (state == State::WAITING && backbone_netif() != nullptr) {
     // Spinel initialization can wait for hardware; never block ESPHome's loop.
     state_ = State::STARTING;
     if (xTaskCreate(start_task_, "br_start", 8192, this, 4, &startup_task_) != pdPASS)
@@ -96,10 +121,10 @@ void ThreadBorderRouter::loop() {
     this->status_set_error(LOG_STR("BR initialization failed"));
     if (thread_role_) thread_role_->publish_state("failed");
   }
-  const bool wifi_up = wifi::global_wifi_component->is_connected();
-  want_backbone_ = wifi_up;
+  const bool backbone_up = backbone_connected();
+  want_backbone_ = backbone_up;
 #ifdef CONFIG_THREAD_BR_WEB
-  bool serve = state == State::READY && wifi_up;
+  bool serve = state == State::READY && backbone_up;
 #ifdef USE_CAPTIVE_PORTAL
   // The portal only runs during fallback provisioning. Release our listener
   // while offline, and wait until the portal has stopped before binding again.
@@ -161,12 +186,17 @@ void ThreadBorderRouter::start_task_(void *arg) {
       last_sample = millis();
     }
     self->service_backbone_();
+#ifdef USE_THREAD_BR_UART_RCP
     self->service_rcp_leds_();
+#else
+    self->sample_native_radio_();
+#endif
     vTaskDelay(pdMS_TO_TICKS(100));
   }
   vTaskDelete(nullptr);
 }
 
+#ifdef USE_THREAD_BR_UART_RCP
 void ThreadBorderRouter::reset_rcp_() {
   thread_br_rcp_led_invalidate();
   // BOOT must be high before EN rises. Keep the ROM downloader accessible by
@@ -191,14 +221,17 @@ void ThreadBorderRouter::rcp_failure_() {
   rcp_reset_failure_();
 }
 
+#endif  // USE_THREAD_BR_UART_RCP
+
 void ThreadBorderRouter::start_() {
   bool ok = initialize_();
   state_ = ok ? State::READY : State::FAILED;
 }
 
 bool ThreadBorderRouter::initialize_() {
-  auto *backbone = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  auto *backbone = backbone_netif();
   if (!backbone) return false;
+#ifdef USE_THREAD_BR_UART_RCP
   if (uart_is_driver_installed(static_cast<uart_port_t>(UART_PORT))) {
     ESP_LOGE(TAG, "UART%d is already owned by another component", UART_PORT);
     return false;
@@ -228,20 +261,27 @@ bool ThreadBorderRouter::initialize_() {
   if (esp_external_coex_set_work_mode(EXTERNAL_COEX_LEADER_ROLE) != ESP_OK ||
       esp_enable_extern_coex_gpio_pin(EXTERN_COEX_WIRE_4, coex_pins) != ESP_OK)
     return false;
+#endif  // USE_THREAD_BR_UART_RCP
   esp_vfs_eventfd_config_t eventfd{};
-  eventfd.max_fds = 3;  // Thread netif, task queue, border router (UART, no TREL).
+  eventfd.max_fds = 3;  // Thread netif, task queue, border router (no TREL).
+#ifdef USE_THREAD_BR_NATIVE
+  eventfd.max_fds++;  // Native radio owns an additional ISR eventfd.
+#endif
   auto err = esp_vfs_eventfd_register(&eventfd);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "eventfd initialization: %s", esp_err_to_name(err));
     return false;
   }
+#ifdef USE_THREAD_BR_UART_RCP
   esp_openthread_register_rcp_failure_handler(rcp_failure_);
   esp_openthread_set_coprocessor_reset_failure_callback(rcp_reset_failure_);
-  // Bind the ESPHome STA netif before the OpenThread platform initializes.
+#endif
+  // Bind the ESPHome backbone netif before the OpenThread platform initializes.
   esp_openthread_set_backbone_netif(backbone);
   auto &config = ot_config_;
   config.netif_config = ESP_NETIF_DEFAULT_OPENTHREAD();
   auto &radio = config.platform_config.radio_config;
+#ifdef USE_THREAD_BR_UART_RCP
   radio.radio_mode = RADIO_MODE_UART_RCP;
   radio.radio_uart_config.port = static_cast<uart_port_t>(UART_PORT);
   radio.radio_uart_config.rx_pin = static_cast<gpio_num_t>(rx_);
@@ -253,6 +293,9 @@ bool ThreadBorderRouter::initialize_() {
   uart.stop_bits = UART_STOP_BITS_1;
   uart.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
   uart.source_clk = UART_SCLK_DEFAULT;
+#else
+  radio.radio_mode = RADIO_MODE_NATIVE;
+#endif
   config.platform_config.host_config.host_connection_mode = HOST_CONNECTION_MODE_NONE;
   config.platform_config.port_config.storage_partition_name = "nvs";
   config.platform_config.port_config.netif_queue_size = 10;
@@ -293,7 +336,7 @@ bool ThreadBorderRouter::initialize_() {
   }
   rcp_fault_ = false;
   healthy_ = true;
-  ESP_LOGI(TAG, "Thread started independently of Wi-Fi; gateway UDP can start after attachment");
+  ESP_LOGI(TAG, "Thread started independently of the backbone; gateway UDP can start after attachment");
   return true;
 }
 
@@ -313,7 +356,7 @@ void ThreadBorderRouter::service_backbone_() {
     }
     backbone_up_ = false;
     backbone_retry_ = false;
-    ESP_LOGI(TAG, "Wi-Fi backbone unavailable; Thread and gateway UDP remain active");
+    ESP_LOGI(TAG, "LAN backbone unavailable; Thread and gateway UDP remain active");
   } else {
     backbone_attempt_at_ = now;
     backbone_retry_ = true;
@@ -328,7 +371,7 @@ void ThreadBorderRouter::service_backbone_() {
         border_router_started_ = true;
         backbone_up_ = true;
         backbone_retry_ = false;
-        ESP_LOGI(TAG, "Wi-Fi backbone ready; border routing started");
+        ESP_LOGI(TAG, "LAN backbone ready; border routing started");
       }
     }
     if (err != ESP_OK)
@@ -348,12 +391,17 @@ void ThreadBorderRouter::sample_() {
   auto *ot = esp_openthread_get_instance();
   const auto role = otThreadGetDeviceRole(ot);
   const uint16_t rloc16 = otThreadGetRloc16(ot);
+#ifdef USE_THREAD_BR_UART_RCP
   // A successful Spinel property round trip, not the Thread attachment state.
   int8_t power{};
   bool healthy = otPlatRadioGetTransmitPower(ot, &power) == OT_ERROR_NONE;
   // The heartbeat confirms a standard Spinel round trip, independently of
   // Thread attachment. A missing heartbeat makes the H2 indicate a fault.
   if (!send_rcp_led_control_(0, 0, 0, healthy, 0)) healthy = false;
+#else
+  int8_t power{};
+  bool healthy = otIp6IsEnabled(ot) && otPlatRadioGetTransmitPower(ot, &power) == OT_ERROR_NONE;
+#endif
   uint16_t neighbors = 0, children = 0;
   otNeighborInfoIterator iterator = OT_NEIGHBOR_INFO_ITERATOR_INIT;
   otNeighborInfo neighbor{};
@@ -370,6 +418,7 @@ void ThreadBorderRouter::sample_() {
   children_ = children;
 }
 
+#ifdef USE_THREAD_BR_UART_RCP
 bool ThreadBorderRouter::send_rcp_led_control_(uint8_t operation, uint8_t update_mask,
                                                uint8_t values, bool healthy, uint16_t sequence) {
   // Spinel header: IID=0, TID=0. Vendor command 15360 is packed as 80 78.
@@ -453,6 +502,23 @@ void ThreadBorderRouter::service_rcp_leds_() {
   esp_openthread_lock_release();
 }
 
+#endif  // USE_THREAD_BR_UART_RCP
+
+#ifdef USE_THREAD_BR_NATIVE
+void ThreadBorderRouter::sample_native_radio_() {
+  // Counters cover all MAC traffic. Never replace IDF's radio callbacks.
+  if (!esp_openthread_lock_acquire(0)) return;
+  auto *ot = esp_openthread_get_instance();
+  const auto *counters = otLinkGetCounters(ot);
+  if (have_radio_counters_ && (counters->mTxTotal != last_tx_ || counters->mRxTotal != last_rx_))
+    radio_activity_sequence_.fetch_add(1);
+  last_tx_ = counters->mTxTotal;
+  last_rx_ = counters->mRxTotal;
+  have_radio_counters_ = true;
+  esp_openthread_lock_release();
+}
+#endif
+
 void ThreadBorderRouter::update() {
   if (state_ != State::READY) return;
   const bool healthy = healthy_ && !rcp_fault_;
@@ -462,6 +528,7 @@ void ThreadBorderRouter::update() {
   if (thread_attached_) thread_attached_->publish_state(healthy && role >= OT_DEVICE_ROLE_CHILD);
   if (thread_role_) thread_role_->publish_state(role < 5 ? roles[role] : "unknown");
   if (rcp_version_) rcp_version_->publish_state(version_);
+  if (radio_version_) radio_version_->publish_state(version_);
   if (rloc16_sensor_) {
     const uint16_t rloc16 = healthy && role >= OT_DEVICE_ROLE_CHILD ? rloc16_.load() : 0xffff;
     char address[7];
@@ -471,7 +538,11 @@ void ThreadBorderRouter::update() {
   if (neighbor_count_) neighbor_count_->publish_state(neighbors_);
   if (child_count_) child_count_->publish_state(children_);
   if (healthy) this->status_clear_warning();
+#ifdef USE_THREAD_BR_UART_RCP
   else this->status_set_warning("RCP communication failure");
+#else
+  else this->status_set_warning("Local Thread radio unavailable");
+#endif
 }
 
 void ThreadBorderRouter::on_shutdown() {
@@ -484,12 +555,23 @@ void ThreadBorderRouter::on_shutdown() {
 }
 
 void ThreadBorderRouter::dump_config() {
+#ifdef USE_THREAD_BR_UART_RCP
   ESP_LOGCONFIG(TAG, "ESP Thread BR (UART RCP, manual RCP firmware)");
+#else
+  ESP_LOGCONFIG(TAG, "ESP Thread BR (native 802.15.4 radio)");
+#endif
+#ifdef USE_THREAD_BR_ETH
+  ESP_LOGCONFIG(TAG, "  Backbone: Ethernet");
+#else
+  ESP_LOGCONFIG(TAG, "  Backbone: Wi-Fi");
+#endif
 #ifdef CONFIG_THREAD_BR_COMMISSIONER_WEB
   commissioner_.dump_config();
 #endif
+#ifdef USE_THREAD_BR_UART_RCP
   ESP_LOGCONFIG(TAG, "  UART%d TX=%d RX=%d, %d baud", UART_PORT, tx_, rx_, BAUD_RATE);
   ESP_LOGCONFIG(TAG, "  RESET=%d BOOT=%d; four-wire external coexistence", reset_, boot_);
+#endif
   ESP_LOGCONFIG(TAG, "  Network: %s, channel %d, PAN ID 0x%04x", CONFIG_OPENTHREAD_NETWORK_NAME,
                 CONFIG_OPENTHREAD_NETWORK_CHANNEL, CONFIG_OPENTHREAD_NETWORK_PANID);
   ESP_LOGCONFIG(TAG, "  Force dataset: %s", YESNO(force_dataset_));
@@ -501,8 +583,8 @@ void ThreadBorderRouter::dump_config() {
     char status[160];
     thread_br_ha_status(status, sizeof(status));
     ESP_LOGCONFIG(TAG, "  HA lookup: %s", status);
-    ESP_LOGCONFIG(TAG, "  HA query conditions: BR=%s Wi-Fi=%s API/query-ready=%s", YESNO(is_thread_ready()),
-                  YESNO(wifi::global_wifi_component->is_connected()), YESNO(want_ha_.load()));
+    ESP_LOGCONFIG(TAG, "  HA query conditions: BR=%s backbone=%s API/query-ready=%s", YESNO(is_thread_ready()),
+                  YESNO(backbone_connected()), YESNO(want_ha_.load()));
   }
 #else
   ESP_LOGCONFIG(TAG, "  Web: disabled");

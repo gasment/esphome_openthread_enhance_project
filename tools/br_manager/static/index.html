@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Thread BR 管理台</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#203247;background:#f2f5f9;font-size:14px}
+    *{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button{cursor:pointer;border:1px solid #ccd6e2;background:white;color:#203247;border-radius:7px;padding:8px 13px}button:hover{background:#eaf0f8}button.primary{background:#1967d2;border-color:#1967d2;color:white}button.danger{color:#ab2336}button:disabled{opacity:.55;cursor:wait}
+    input{width:100%;border:1px solid #c8d3e0;padding:10px;border-radius:7px;background:white}label{display:block;margin:13px 0 6px;color:#425772}h1,h2,h3,p{margin-top:0}h1{font-size:21px}h2{font-size:20px}h3{font-size:16px}small,.muted{color:#6c7d91}small{line-height:1.6}a{color:#1967d2}code{word-break:break-all}header{height:72px;background:#142a43;color:white;padding:16px 25px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0}header small{color:#b3c7df}.toolbar,.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.toolbar{margin-bottom:20px}.toolbar input{flex:1;min-width:190px}.toolbar button{white-space:nowrap}
+    main{max-width:1760px;margin:auto;padding:18px 22px}.grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:16px;align-items:start}.cards{display:flex;flex-direction:column;gap:8px;min-width:0}.card,.panel{background:white;border:1px solid #dde5ee;border-radius:10px}.panel{padding:16px;position:sticky;top:12px;max-height:calc(100dvh - 24px);overflow:auto}.card{min-width:0;scroll-margin-top:12px}.br-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 14px;align-items:center;padding:10px 12px}.br-info{min-width:0}.headline,.details,.tags{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.headline h3{margin:0 5px 0 0;font-size:15px;max-width:30ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.details{margin-top:5px;gap:5px 12px;color:#758397;font-size:12px}.details .address{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38ch}.details .network{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:28ch}.tags{gap:4px;min-width:0}.badge{display:inline-block;background:#edf2f8;border:0;border-radius:20px;padding:2px 7px;font-size:11px;line-height:1.5;white-space:nowrap}.badge.online{background:#e3f5eb;color:#19754a}.badge.offline,.badge.auth_error,.badge.http_error{background:#ffeced;color:#a33342}.tags .badge{cursor:pointer;max-width:20ch;overflow:hidden;text-overflow:ellipsis}.br-row .actions{gap:5px;justify-content:flex-end}.br-row .actions button{font-size:12px;padding:6px 9px;white-space:nowrap}.br-row .error{grid-column:1/-1;margin:0;font-size:12px}.card.is-open{display:flex;flex-direction:column;height:calc(var(--viewport-height,100dvh) - 24px);overflow:hidden;border-color:#94b9ee;box-shadow:0 2px 12px #1967d20c}.card.is-open>.br-row{flex-shrink:0;max-height:45%;overflow:auto;background:#f8fbff}.discovery{padding:13px 0;border-bottom:1px solid #e5ebf2;overflow-wrap:anywhere}.discovery:last-child{border:0}.discovery strong{display:block;margin-bottom:5px}.discovery small{display:block}.discovery button{margin-top:8px}.empty{padding:24px 8px;text-align:center;color:#758397}.error{color:#ad263c;white-space:pre-wrap}.hint{background:#e9f0fa;border-radius:8px;padding:12px;line-height:1.7;margin-bottom:18px}
+    #login{max-width:390px;margin:12vh auto;padding:30px;background:white;border:1px solid #dde5ee;border-radius:14px}#login button{width:100%;margin-top:22px}#login p{line-height:1.7}.hidden,[hidden]{display:none!important}#notice{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#142a43;color:white;padding:12px 20px;border-radius:8px;max-width:90vw;z-index:10;white-space:pre-wrap}
+    dialog{border:1px solid #ccd6e2;border-radius:14px;padding:25px;width:min(600px,94vw);max-height:90vh}dialog::backdrop{background:#10243e88}.formrow{display:grid;grid-template-columns:1fr 1fr;gap:15px}.checks{display:flex;gap:18px;flex-wrap:wrap}.checks label{display:flex;align-items:center;gap:6px}.checks input{width:auto}.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:23px}.wide{grid-column:1/-1}#viewer{display:flex;flex-direction:column;flex:1;min-height:0;background:white;border-top:1px solid #dde5ee;overflow:hidden}#viewerbar{flex-shrink:0;padding:7px 12px;display:flex;gap:8px;align-items:center;justify-content:space-between}#viewerbar .actions{gap:5px;justify-content:flex-end}#viewerbar button{font-size:12px;padding:5px 8px;white-space:nowrap}#frame{display:block;flex:1;min-height:0;width:100%;border:0;background:white}#frameWarning{flex-shrink:0;max-height:25%;overflow:auto;padding:0 12px 8px;color:#ad263c;font-size:12px}#viewerTitle{font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.summary{margin-bottom:10px;color:#6c7d91}#discoveryError{font-size:12px}.link{color:#1967d2;border:0;padding:0;background:none}.login-head{font-size:12px;letter-spacing:2px;color:#1967d2;margin-bottom:10px}
+    @media(max-width:1100px){.br-row{grid-template-columns:1fr}.br-row .actions{justify-content:flex-start}}
+    @media(max-width:850px){.grid{grid-template-columns:1fr}header{padding:15px}main{padding:14px}.panel{position:static;max-height:none}.formrow{grid-template-columns:1fr}.wide{grid-column:auto}.headline h3{max-width:24ch}.details .address{max-width:100%}#viewerbar{flex-wrap:wrap}#viewerTitle{max-width:100%}#viewerbar .actions{margin-left:auto}}
+  </style>
+</head>
+<body>
+  <section id="login" hidden>
+    <div class="login-head">THREAD BORDER ROUTERS</div><h1>登录 BR 管理台</h1>
+    <p class="muted">集中查看边界路由器，通过安全代理进入各设备的 Web。</p>
+    <form id="loginForm"><label for="loginUser">用户名</label><input id="loginUser" autocomplete="username" required value="admin">
+      <label for="loginPassword">密码</label><input id="loginPassword" type="password" autocomplete="current-password" required>
+      <p id="loginError" class="error"></p><button class="primary">登录</button></form>
+  </section>
+  <div id="workspace" hidden>
+    <header><div><h1>Thread BR 管理台</h1><small>发现 · 接入 · 集中访问</small></div><button id="logout">退出登录</button></header>
+    <main>
+      <div class="toolbar"><input id="filter" aria-label="搜索设备" placeholder="搜索名称、TAG、网络或地址…"><button id="refresh">刷新</button><button id="add" class="primary">手动添加 BR</button></div>
+      <div class="grid">
+        <section><div class="summary" id="summary"></div><div id="cards" class="cards"></div></section>
+        <aside class="panel"><h3>局域网发现</h3><p id="discoveryError" class="error"></p><div id="discovered"></div></aside>
+      </div>
+      <section id="viewer" hidden><div id="viewerbar"><span id="viewerTitle"></span><div class="actions"><button id="frameReload">重新加载</button><button id="frameNew">新窗口</button><button id="frameHelp">访问帮助</button><button id="frameClose">收起</button></div></div><div id="frameWarning" hidden></div><iframe id="frame" title="BR Web 管理界面" src="about:blank" referrerpolicy="no-referrer"></iframe></section>
+    </main>
+  </div>
+  <dialog id="editor"><form id="editForm">
+    <h2 id="editTitle">添加 BR</h2>
+    <div class="hint">代理端口对应一个 BR，页面和 API 均由管理台转发。_meshcop 的 UDP 端口不是 Web 端口。</div>
+    <div class="formrow">
+      <div><label for="name">名称</label><input id="name" required maxlength="80"></div>
+      <div><label for="tags">TAG（逗号分隔）</label><input id="tags" placeholder="二楼, 卧室"></div>
+      <div class="wide"><label for="upstream">BR Web 地址</label><input id="upstream" required placeholder="http://192.168.32.50:80/"><small>IPv6 示例：http://[fd12::1234]:80/；链路本地地址需带 Linux 网卡作用域，例如 [fe80::1234%25eth0]。</small></div>
+      <div><label for="proxyPort">管理主机代理端口</label><input id="proxyPort" type="number" min="1024" max="65535" placeholder="自动分配"></div>
+      <div><label for="networkName">Thread 网络分组名称</label><input id="networkName" maxlength="80"></div>
+      <div class="wide"><label for="publicUrl">外层反代访问地址（可留空）</label><input id="publicUrl" placeholder="https://管理台同一主机地址:18443/"><small>留空时使用浏览器当前协议、主机及代理端口。请与管理台使用相同主机名/IP，以共享登录会话；只填根地址。</small></div>
+    </div>
+    <label>能力角色（手动指定）</label><div class="checks"><label><input type="checkbox" name="role" value="br" checked>BR</label><label><input type="checkbox" name="role" value="gateway">Gateway</label><label><input type="checkbox" name="role" value="commissioner">Commissioner 配网</label></div>
+    <label id="replaceWrap"><input id="replaceCredentials" type="checkbox" style="width:auto"> 更新 BR 凭据（不勾选则保留已保存凭据）</label>
+    <div id="credentials" class="formrow"><div><label for="username">BR 用户名</label><input id="username" autocomplete="off" maxlength="128"></div><div><label for="password">BR 密码</label><input id="password" type="password" autocomplete="new-password" maxlength="256"></div></div>
+    <small>BR 未开启认证时，两项均留空。密码只提交到管理台，不回显。</small><p id="editError" class="error"></p>
+    <div class="modal-actions"><button type="button" id="editCancel">取消</button><button class="primary" id="save">保存并接入</button></div>
+  </form></dialog>
+  <div id="notice" hidden role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,6 +1,68 @@
 # ESPHome thread_br — Thread Border Router
 
-独立 ESPHome 外部组件，目标为 ESP32-S3 + ESP32-H2 UART RCP。
+## Ethernet / Native Radio（第一版）
+
+新增 `backbone: wifi | eth` 和 `radio: uart_rcp | native`。
+默认值为 `wifi + uart_rcp`，已有 S3 + H2 配置无需修改。
+Wi-Fi 骨干只允许 UART RCP；Ethernet 骨干允许 UART RCP 或 Native，且不能配置 `wifi:`。
+Native 首版允许 C5/C6/H2，当前项目示例为 C5 + W5500 + PSRAM。
+框架仍要求 ESP-IDF 5.5.x。
+
+验证状态（2026-11-04）：配置校验及 18 项配置/内存内代码生成检查已通过；用户反馈第一版编译通过。
+**待上板测试：硬件暂未就绪。** 编译通过不代表所有芯片和模式组合均已验证。
+原 S3 + H2 旧配置的运行兼容性、H2 LED 状态恢复及故障优先级、RCP 故障恢复、
+Wi-Fi/Ethernet 断线重连、Native LED、Commissioner、SRP 和 Gateway/实体桥功能均待实机确认。
+
+```yaml
+thread_br:
+  id: thread_br_main
+  backbone: eth
+  radio: native
+  # 原有 thread_network_config、web、commissioner、HA 及诊断配置照旧。
+  # Native 模式移除 rcp 和 rcp_version，可改用 radio_version。
+  radio_version:
+    name: Thread Radio Version
+```
+
+使用 ESPHome `ethernet:` 已创建的网口作为骨干，不另装驱动。
+Thread 启动不等待网线或 IP；断网保留本地 Thread 和 Gateway UDP，重连后恢复边界路由及 Web。
+Dataset、OMR、SRP/DNS-SD、Web、Commissioner、HA 拓扑名称和 Gateway/实体桥保持共用实现。
+Ethernet + UART RCP 仍保留原 H2 心跳、LED 和四线共存接线；请检查 UART/共存引脚与 Ethernet 引脚不冲突。
+
+仅 Native 模式可使用集成 LED 开关（external_components 列表增加 `thread_br_led`）：
+
+```yaml
+switch:
+  - platform: thread_br_led
+    thread_br_id: thread_br_main
+    type: activity
+    name: Thread Activity LED
+    pin:
+      number: GPIO23
+      inverted: false
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: thread_br_led
+    thread_br_id: thread_br_main
+    type: connection
+    name: Thread Connection LED
+    pin: GPIO24
+    restore_mode: RESTORE_DEFAULT_ON
+```
+
+平台直接管理 GPIO，无需模板开关、`output` 或自动化回调。
+Activity 依据本地 MAC 收发计数变化指示，100ms 翻转，最后一次活动后保持 200ms；关闭使能后熄灭。
+Connection 表示本地栈/射频健康，正常时跟随使能设置；启动未就绪或检测到故障时每 200ms 翻转，强制覆盖 OFF。
+覆盖不改变开关状态或其持久化值，恢复后重新遵循使能设置。
+拔网线或暂未附着不直接视为本地射频故障；健康检测不等于无线链路质量测试。
+每个 BR 的每种 LED 只能配置一次，引脚由 ESPHome 统一校验；H2 RCP LED 实现不变。
+
+只做配置校验：`esphome config config.yaml`。
+回归检查：`python tests/test_thread_br_config.py`（配置和内存内代码生成，不调用编译器）。
+固件编译与实机验证由用户选择执行。
+
+## 原 Wi-Fi + UART RCP 使用说明
+
+以下为原 ESP32-S3 + ESP32-H2 UART RCP 模式的说明。
 参考本仓库 `esp-thread-br-main`，底层复用 ESP-IDF 的 OpenThread 和 BR 库。
 
 ## 版本与构建

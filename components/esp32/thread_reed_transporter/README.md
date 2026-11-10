@@ -1,5 +1,9 @@
 # thread_reed_transporter（首版）
 
+> **协议 v2（破坏性更新）**：配置和接入逻辑以根目录 [更新日志与 YAML diff](../../../TRANSPORT_V2_CHANGELOG.md) 为准。
+> 下文原 v1 报文/旧发现配置及手工 revision 说明保留作历史参考，不适用于当前实现。
+
+
 常在线 ESP32 REED 节点的标准 ESPHome 实体 UDP 代理。只引用现有实体 ID，实体自己负责采样、filters、状态发布和本地自动化。不依赖 Native API，不使用 RTC 基准，不调用 component.update，不修改 Thread 角色或路由策略。
 
 `thread_sed_transporter` 保持原样，仍用于间歇唤醒节点。两者不能在同一节点重复绑定、代理同一组实体。

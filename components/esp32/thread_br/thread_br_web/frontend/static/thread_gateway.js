@@ -231,6 +231,25 @@
     const {entities,commands,last_packet,...debug} = node;
     text($('debug'), JSON.stringify(debug, null, 2) + '\n\n最近报文：\n' + (last_packet || '无'));
   }
+  function renderDiscovered(info) {
+    const list = $('discoveredNodes'); list.replaceChildren();
+    if (info.ledger_error) list.append(el('p', 'thread_gateway-meta', info.ledger_error));
+    if (info.synchronizing) list.append(el('p', 'thread_gateway-meta', '正在同步网关归属记录…'));
+    if (!info.nodes.length) list.append(el('p', 'thread_gateway-meta', '暂无待接入节点'));
+    for (const node of info.nodes) {
+      const row = el('div', 'thread_gateway-row');
+      row.append(el('span', '', '[' + node.node_type.toUpperCase() + '] ' + node.name + ' (' + node.id + ')'));
+      const button = el('button', 'btn btn-sm', node.waiting_for_revoke ? '等待节点清除旧绑定' : node.pending ? '等待节点唤醒确认' : '接入此网关');
+      button.disabled = node.pending || node.waiting_for_revoke || !!info.ledger_error;
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try { await request('/thread_gateway/api/adopt', {node:node.id, confirm:true}); notice('接入请求已保存，等待节点确认'); }
+        catch (error) { notice(error.message); }
+        finally { await refresh(); }
+      });
+      row.append(button); list.append(row);
+    }
+  }
   async function refresh() {
     if (loading || rebooting) return;
     loading = true;
@@ -238,7 +257,7 @@
       const info = await request('/thread_gateway/api/' + (nodeId ? 'info' : 'nodes'));
       summary(info);
       if (nodeId) renderNode(await request(base));
-      else renderNodes(info.nodes);
+      else { renderNodes(info.nodes); renderDiscovered(await request("/thread_gateway/api/discovered")); }
     } catch (error) { $('deleteNode').disabled = saving || rebooting; notice(error.message); }
     finally { loading = false; }
   }
@@ -259,7 +278,7 @@
   });
   $('deleteNode').addEventListener('click', async () => {
     if (!nodeId || saving || rebooting) return;
-    if (!confirm('确定删除节点“' + nodeId + '”？\n将清空该节点的清单、接入设置、当前读数和控制记录。\n下次网关重启后按最新批准清单应用 HA 实体。\n节点再次上报时会重新发现，原接入设置不恢复。')) return;
+    if (!confirm('确定删除节点“' + nodeId + '”？\n将清空该节点的清单、接入设置、当前读数和控制记录。\n下次网关重启后按最新批准清单应用 HA 实体。\n接入授权将立即撤销；休眠节点下次通信时清除旧绑定，再等待重新接入。')) return;
     saving = true;
     $('deleteNode').disabled = true; $('save').disabled = true; $('apply').disabled = true;
     try {
@@ -283,10 +302,10 @@
     } catch (error) { notice(error.message); }
   });
   if (nodeId) {
-    $('nodesSection').hidden = true; $('back').hidden = false; $('deleteNode').hidden = false;
+    $('nodesSection').hidden = true; $('discoveredSection').hidden = true; $('back').hidden = false; $('deleteNode').hidden = false;
     for (const id of ['entitiesSection','debugSection']) $(id).hidden = false;
   }
   if (new URLSearchParams(location.search).get('deleted') === '1')
-    notice('节点已删除并保存至 NVS。下次网关重启应用最新清单；当前不会自动重启；若节点再次上报，会作为新节点重新加入管理。');
+    notice('节点已删除并保存至 NVS。下次网关重启应用最新清单；当前不会自动重启；节点再次上报将收到撤销通知，不会自动重新接入。');
   refresh(); timer = setInterval(refresh, 1000);
 })();

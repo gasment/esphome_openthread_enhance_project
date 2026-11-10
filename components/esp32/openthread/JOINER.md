@@ -101,7 +101,14 @@ nRF52 使用 `CONFIG_OPENTHREAD_CUSTOM_PARAMETERS` 传入扩展宏。
 ## 已配网节点迁移与恢复
 
 主动 start 会暂停当前 Thread 附着，备份 Active/Pending Dataset 和当前扩展地址，
-再进行新配网。新的 Dataset 成功附着后删除备份，后续启动使用新 Dataset。
+再进行新配网。每次 Joiner 尝试（含重试）前将 MAC PAN ID 设为广播值 `0xffff`，
+避免 OpenThread 把旧网络或上次候选网络的 PAN ID 当作发现过滤条件。
+该 API 会清除当前 Active/Pending Dataset，但已验证的独立回滚备份继续保留，失败或取消仍按原机制恢复。
+新的 Dataset 成功附着后删除备份，后续启动使用新 Dataset。
+
+附近不同 Thread 网络的 BR 都可能收到广播发现，这不代表节点同时加入多个网络。
+跨网络迁移时仅在目标网络授权该节点，关闭旧网络尚未结束的配网窗口；否则旧网络仍可能被选中。
+BR 配网页面还会保留最近发现记录最多约两分钟，显示条目不代表当前仍附着于该网络。
 失败、取消或超时恢复旧 Dataset，并恢复原有 Thread 启用状态；回调不等待旧网络重新附着。
 首次配网失败则恢复为无 Dataset 的等待状态。
 

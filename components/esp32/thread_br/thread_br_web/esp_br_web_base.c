@@ -139,6 +139,14 @@ cJSON *otbr_properties_struct_convert2_json(openthread_properties_t *properties)
     sprintf(format, "%d dBm", properties->rcp.txpower);
     cJSON_AddStringToObject(root, "RCP:TxPower", format);
     cJSON_AddStringToObject(root, "RCP:Version", properties->rcp.version);
+    /* Retain legacy RCP keys for clients; identify native radios explicitly. */
+#if CONFIG_OPENTHREAD_RADIO_NATIVE
+    cJSON_AddStringToObject(root, "Radio:Mode", "native");
+#else
+    cJSON_AddStringToObject(root, "Radio:Mode", "uart_rcp");
+#endif
+    cJSON_AddStringToObject(root, "Radio:Version", properties->rcp.version);
+
 
     cJSON_AddStringToObject(root, "WPAN service", properties->wpan.service);
 
