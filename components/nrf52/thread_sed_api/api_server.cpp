@@ -65,7 +65,7 @@ void APIServer::socket_failed_(const LogString *msg) {
 }
 
 void APIServer::setup() {
-  this->subscribe_home_assistant_state("thread_sed.control", "", [this](StringRef value) { this->sed_control(value); });
+  this->subscribe_home_assistant_state("thread_sed.control", "", [](StringRef) {});
 #ifdef USE_THREAD_SED_SLEEP
   auto *sleep = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
   if (sleep != nullptr) {
@@ -222,6 +222,8 @@ void APIServer::loop() {
   uint8_t client_index = 0;
   while (client_index < this->api_connection_count_) {
     auto &client = this->clients_[client_index];
+  if (this->sed_auto_client_ == client.get()) this->sed_auto_disconnected_ = true;
+  if (this->sed_batch_done_ && this->sed_batch_client_ == client.get()) this->sed_batch_disconnected_ = true;
 
     // Common case: process active client
     if (!client->flags_.remove) {
@@ -253,6 +255,8 @@ void APIServer::refill_spare_ephemeral_() {
 
 void APIServer::remove_client_(uint8_t client_index) {
   auto &client = this->clients_[client_index];
+  if (this->sed_auto_client_ == client.get()) this->sed_auto_disconnected_ = true;
+  if (this->sed_batch_done_ && this->sed_batch_client_ == client.get()) this->sed_batch_disconnected_ = true;
 
 #ifdef USE_THREAD_SED_API_USER_DEFINED_ACTION_RESPONSES
   this->unregister_active_action_calls_for_connection(client.get());
@@ -399,11 +403,13 @@ void APIServer::handle_disconnect(APIConnection *conn) {}
 // Macro for controller update dispatch
 #define API_DISPATCH_UPDATE(entity_type, entity_name) \
   void APIServer::on_##entity_name##_update(entity_type *obj) { /* NOLINT(bugprone-macro-parentheses) */ \
-    if (obj->is_internal()) \
+    if (obj->is_internal() || this->sed_manual_send_) \
       return; \
     for (auto &c : this->active_clients()) { \
-      if (c->flags_.state_subscription) \
-        c->send_##entity_name##_state(obj); \
+      if (c->flags_.state_subscription) { \
+        const bool queued = c->send_##entity_name##_state(obj); \
+        this->sed_auto_published(c.get(), queued); \
+      } \
     } \
   }
 
@@ -483,18 +489,20 @@ API_DISPATCH_UPDATE(water_heater::WaterHeater, water_heater)
 void APIServer::on_event(event::Event *obj) {
   if (obj->is_internal())
     return;
-  this->sed_queue_event(obj->get_object_id_hash(), obj->get_last_event_type());
+  this->sed_queue_event(obj, obj->get_last_event_type());
 }
 #endif
 
 #ifdef USE_UPDATE
 // Update is a special case - the method is called on_update, not on_update_update
 void APIServer::on_update(update::UpdateEntity *obj) {
-  if (obj->is_internal())
+  if (obj->is_internal() || this->sed_manual_send_)
     return;
   for (auto &c : this->active_clients()) {
-    if (c->flags_.state_subscription)
-      c->send_update_state(obj);
+    if (c->flags_.state_subscription) {
+      const bool queued = c->send_update_state(obj);
+      this->sed_auto_published(c.get(), queued);
+    }
   }
 }
 #endif

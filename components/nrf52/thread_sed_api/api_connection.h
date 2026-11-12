@@ -290,13 +290,16 @@ class APIConnection final : public APIServerConnectionBase {
   void on_wizard_input_set_request(const WizardInputSetRequest &msg);
 #endif
   void on_list_entities_request() { this->begin_iterator_(ActiveIterator::LIST_ENTITIES); }
-  void on_subscribe_states_request() {
-    this->flags_.state_subscription = true;
-    // Start initial state iterator only if no iterator is active
-    // If list_entities is running, we'll start initial_state when it completes
-    if (this->active_iterator_ == ActiveIterator::NONE) {
-      this->begin_iterator_(ActiveIterator::INITIAL_STATE);
-    }
+  void on_subscribe_states_request();
+  void sed_begin_snapshot(const std::vector<EntityBase *> *entities);
+  bool sed_wants_entity(EntityBase *entity) const {
+    if (this->sed_selected_entities_ == nullptr) return true;
+    for (auto *selected : *this->sed_selected_entities_) if (selected == entity) return true;
+    return false;
+  }
+  bool sed_session_ready() {
+    return this->sed_ready_ && !this->flags_.remove && this->is_authenticated() &&
+           this->flags_.state_subscription && this->flags_.service_call_subscription;
   }
   void on_subscribe_logs_request(const SubscribeLogsRequest &msg) {
     this->flags_.log_subscription = msg.level;
@@ -315,7 +318,7 @@ class APIConnection final : public APIServerConnectionBase {
   }
 #ifdef USE_THREAD_SED_API_HOMEASSISTANT_SERVICES
   void on_subscribe_homeassistant_services_request();
-  bool sed_flush_ready() { return this->is_authenticated() && this->flags_.state_subscription && this->flags_.service_call_subscription && this->active_iterator_ == ActiveIterator::NONE && this->deferred_batch_.empty(); }
+  bool sed_flush_ready() { return this->sed_session_ready() && this->active_iterator_ == ActiveIterator::NONE && this->deferred_batch_.empty(); }
 #endif
 #ifdef USE_THREAD_SED_API_HOMEASSISTANT_STATES
   void on_subscribe_home_assistant_states_request();
@@ -798,6 +801,8 @@ class APIConnection final : public APIServerConnectionBase {
   // Client API versions are clamped to 255 on receive (see send_hello_response_)
   uint8_t client_api_version_major_{0};
   uint8_t client_api_version_minor_{0};
+  bool sed_ready_{false};
+  const std::vector<EntityBase *> *sed_selected_entities_{nullptr};
   ActiveIterator active_iterator_{ActiveIterator::NONE};
   // Total: 2 (flags) + 2 + 1 + 1 + 1 + 1 (batch_header_size_ below) = 8 bytes,
   // aligned to 4-byte boundary

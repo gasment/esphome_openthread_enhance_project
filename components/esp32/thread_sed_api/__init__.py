@@ -22,6 +22,48 @@ DEPENDENCIES = ['network']
 ns = cg.esphome_ns.namespace('thread_sed_api')
 APIServer = ns.class_('APIServer', cg.Component)
 CanSleepCondition = ns.class_('CanSleepCondition', automation.Condition)
+IsReadyCondition = ns.class_('IsReadyCondition', automation.Condition)
+SendAction = ns.class_('SendAction', automation.Action)
+
+@automation.register_condition('thread_sed_api.is_ready', IsReadyCondition,
+    cv.maybe_simple_value({cv.GenerateID():cv.use_id(APIServer)},key=CONF_ID))
+async def is_ready_to_code(config, condition_id, template_arg, args):
+    return cg.new_Pvariable(condition_id,template_arg,await cg.get_variable(config[CONF_ID]))
+
+@automation.register_action('thread_sed_api.send', SendAction, cv.Schema({
+    cv.GenerateID():cv.use_id(APIServer),
+    cv.Optional('timeout',default='2s'):cv.templatable(cv.positive_time_period_milliseconds),
+    cv.Optional('entity_id'):cv.All(cv.ensure_list(cv.use_id(cg.EntityBase)),cv.Length(min=1)),
+    cv.Optional('on_success'):automation.validate_action_list,
+    cv.Optional('on_error'):automation.validate_action_list,
+}), synchronous=False)
+async def send_to_code(config, action_id, template_arg, args):
+    var=cg.new_Pvariable(action_id,template_arg,await cg.get_variable(config[CONF_ID]))
+    cg.add(var.set_timeout(await cg.templatable(config['timeout'],args,cg.uint32)))
+    if 'entity_id' in config:
+        # Resolve the actual entity class, including entities nested inside a
+        # custom component rather than declared under a top-level sensor key.
+        supported = [cg.esphome_ns.namespace(domain).class_(name) for domain,name in (
+            ('sensor','Sensor'),('binary_sensor','BinarySensor'),('text_sensor','TextSensor'),
+            ('switch_','Switch'),('number','Number'),('select','Select'),('text','Text'),
+            ('light','LightState'),('fan','Fan'),('cover','Cover'),('climate','Climate'),
+            ('lock','Lock'),('valve','Valve'),('event','Event'))]
+        selected = []
+        for entity_id in config['entity_id']:
+            path = CORE.config.get_path_for_id(entity_id)
+            declaration = CORE.config.get_config_for_path(path)
+            if declaration.type is None or not any(declaration.type.inherits_from(t) for t in supported):
+                raise cv.Invalid(f"send entity_id '{entity_id}' is not a supported state/event entity")
+            entity_config = CORE.config.get_config_for_path(path[:-1])
+            if entity_config.get('internal',False):
+                raise cv.Invalid(f"send entity_id '{entity_id}' is internal; expose it with a name or internal: false")
+            selected.append(await cg.get_variable(entity_id))
+        cg.add(var.set_entities(selected))
+    for branch in ('on_success','on_error'):
+        if branch in config:
+            actions=await automation.build_action_list(config[branch],template_arg,args)
+            cg.add(getattr(var,'add_'+branch)(actions))
+    return var
 
 @automation.register_condition('thread_sed_api.can_sleep', CanSleepCondition,
     cv.Schema({cv.GenerateID():cv.use_id(APIServer)}))
@@ -35,6 +77,10 @@ def noise_key(value):
     return value
 
 def validate(config):
+    if config['send_mode'] != 'auto' and any(k in config for k in ('on_ack','on_ack_error')):
+        raise cv.Invalid('on_ack/on_ack_error require send_mode: auto; manual send uses action callbacks')
+    if config['auto_ack_timeout'].total_milliseconds <= 0:
+        raise cv.Invalid('auto_ack_timeout must be greater than zero')
     if not 10 <= config['fast_poll_interval'].total_milliseconds <= 1000:
         raise cv.Invalid('fast_poll_interval must be between 10ms and 1s')
     if config['sleep_ack_timeout'].total_milliseconds <= 0:
@@ -51,6 +97,10 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.GenerateID(): cv.declare_id(APIServer),
     cv.Optional(CONF_ENCRYPTION): cv.Schema({cv.Required(CONF_KEY): cv.sensitive(noise_key)}),
     cv.Optional('port', default=6053): cv.port,
+    cv.Optional('send_mode', default='auto'): cv.one_of('auto','manual',lower=True),
+    cv.Optional('on_ack'):automation.validate_automation(single=True),
+    cv.Optional('on_ack_error'):automation.validate_automation(single=True),
+    cv.Optional('auto_ack_timeout',default='2s'):cv.positive_time_period_milliseconds,
     cv.Optional('deep_sleep_id'): sleep_id,
     cv.Optional('sleep_duration'): cv.positive_time_period_milliseconds,
     cv.Optional('sleep_ack_timeout', default='10s'): cv.positive_time_period_milliseconds,
@@ -96,6 +146,15 @@ async def to_code(config):
     request_log_listener()
     cg.add(var.set_port(config['port']))
     cg.add(var.set_reboot_timeout(0))
+    cg.add(var.set_manual_send(config['send_mode']=='manual'))
+    if any(k in config for k in ('on_ack','on_ack_error')):
+        cg.add(var.enable_auto_ack(config['auto_ack_timeout']))
+    if 'on_ack' in config:
+        await automation.build_automation(var.get_auto_ack_trigger(),
+            [(cg.std_string,'batch_id'),(cg.uint32,'elapsed_ms'),(cg.bool_,'has_pending')],config['on_ack'])
+    if 'on_ack_error' in config:
+        await automation.build_automation(var.get_auto_ack_error_trigger(),
+            [(cg.std_string,'batch_id'),(cg.std_string,'reason')],config['on_ack_error'])
     cg.add(var.set_batch_delay(config['batch_delay']))
     if CONF_ENCRYPTION in config:
         cg.add(var.set_noise_psk(new_psk_progmem(config[CONF_ENCRYPTION][CONF_KEY])))

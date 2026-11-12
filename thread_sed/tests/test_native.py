@@ -42,6 +42,7 @@ class NativePeer:
                 data=msg.SerializeToString()
                 raw=ident.to_bytes(2,'big')+len(data).to_bytes(2,'big')+data
                 writer.write(packet(noise.encrypt(raw))); await writer.drain()
+            self.send = send
             while True:
                 raw=noise.decrypt(await frame(reader)); ident=int.from_bytes(raw[:2],'big')
                 if ident==1: await send(2,pb.HelloResponse(api_version_major=1,api_version_minor=14,name='test-node'))
@@ -54,6 +55,8 @@ class NativePeer:
                     msg=pb.HomeassistantActionRequest(service='thread_sed.session')
                     msg.data.add(key='schema',value='fixture-v1'); msg.data.add(key='sleep_seconds',value='30')
                     await send(35,msg)
+                elif ident==38:
+                    await send(39,pb.SubscribeHomeAssistantStateResponse(entity_id='thread_sed.control'))
                 elif ident==20: await send(25,pb.SensorStateResponse(key=7,state=21.5))
                 elif ident==40:
                     msg=pb.HomeAssistantStateResponse(); msg.ParseFromString(raw[4:]); self.controls.append(msg.state)

@@ -75,11 +75,30 @@ class APIServer final : public Component
   void set_sleep_seconds(uint32_t seconds) { sed_expected_sleep_seconds_ = seconds; }
   bool sed_sleep_guard();
   void sed_poll(bool fast);
-  void sed_queue_event(uint32_t key, StringRef type);
+  void sed_queue_event(EntityBase *entity, StringRef type);
   void sed_wake();
   void sed_tick();
   bool sed_send(const char *service, const std::string &value);
-  void sed_control(StringRef value);
+  void sed_control(APIConnection *client, StringRef value);
+  void set_manual_send(bool value) { sed_manual_send_ = value; }
+  bool sed_manual_send() const { return sed_manual_send_; }
+  bool sed_is_ready() const;
+  bool sed_begin_batch(const void *owner, uint32_t timeout, const std::vector<EntityBase *> &entities, std::function<void(bool)> done);
+  bool sed_batch_wants(EntityBase *entity) const;
+  void enable_auto_ack(uint32_t timeout) { sed_auto_enabled_ = true; sed_auto_timeout_ = timeout; }
+  Trigger<std::string, uint32_t, bool> *get_auto_ack_trigger() { return &sed_auto_ack_trigger_; }
+  Trigger<std::string, std::string> *get_auto_ack_error_trigger() { return &sed_auto_error_trigger_; }
+  bool sed_auto_pending() const { return sed_auto_enabled_ && sed_auto_generation_ != sed_auto_confirmed_; }
+  bool sed_auto_callbacks_running() {
+    return sed_auto_ack_trigger_.is_action_running() || sed_auto_error_trigger_.is_action_running();
+  }
+  void sed_auto_published(APIConnection *client, bool queued = true);
+  void sed_auto_tick();
+  void sed_auto_finish(bool success, const char *reason);
+  void sed_cancel_batch(const void *owner);
+  void sed_batch_tick();
+  void sed_finish_batch(bool success, const char *reason);
+  bool sed_send_to(APIConnection *client, const char *service, const std::string &value);
 
   void setup() override;
   uint16_t get_port() const { return this->port_; }
@@ -402,7 +421,24 @@ class APIServer final : public Component
   uint16_t port_{6053};        // Keep in sync with DEFAULT_PORT in __init__.py
   uint16_t batch_delay_{100};  // Keep in sync with DEFAULT_BATCH_DELAY in __init__.py
   uint8_t listen_backlog_{4};  // Keep in sync with DEFAULT_LISTEN_BACKLOG in __init__.py
-  struct SedEvent { uint32_t sequence; uint32_t key; std::string type; };
+  bool sed_auto_enabled_{false}, sed_auto_waiting_{false}, sed_auto_acked_{false}, sed_auto_disconnected_{false};
+  APIConnection *sed_auto_client_{nullptr};
+  uint32_t sed_auto_generation_{0}, sed_auto_confirmed_{0}, sed_auto_marker_generation_{0};
+  uint32_t sed_auto_sequence_{0}, sed_auto_started_{0}, sed_auto_timeout_{2000};
+  std::string sed_auto_token_;
+  const char *sed_auto_error_{nullptr};
+  Trigger<std::string, uint32_t, bool> sed_auto_ack_trigger_;
+  Trigger<std::string, std::string> sed_auto_error_trigger_;
+  bool sed_manual_send_{false};
+  APIConnection *sed_batch_client_{nullptr};
+  const void *sed_batch_owner_{nullptr};
+  std::function<void(bool)> sed_batch_done_;
+  std::string sed_batch_token_;
+  std::vector<EntityBase *> sed_batch_entities_;
+  uint32_t sed_batch_sequence_{0}, sed_batch_started_{0}, sed_batch_timeout_{0};
+  uint32_t sed_batch_cutoff_{0}, sed_batch_event_cursor_{0};
+  bool sed_batch_marker_sent_{false}, sed_batch_acked_{false}, sed_batch_disconnected_{false};
+  struct SedEvent { uint32_t sequence; uint32_t key; std::string type; EntityBase *entity; };
   std::vector<SedEvent> sed_events_;
   uint32_t sed_expected_sleep_seconds_{0};
   uint32_t sed_event_sequence_{0}, sed_boot_{0}, sed_event_sent_{0}, sed_saved_poll_{0};
@@ -459,4 +495,5 @@ template<typename... Ts> class APIConnectedCondition final : public Condition<Ts
 };
 
 }  // namespace esphome::thread_sed_api
+#include "sed_automation.h"
 #endif

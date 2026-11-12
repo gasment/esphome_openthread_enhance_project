@@ -117,3 +117,39 @@ script:
 HA 中移除旧 OpenThread Gateway 集成，安装 `custom_components/thread_sed`，通过发现卡片逐个接入。BR 无需配置节点的 Noise key，HA 宿主机必须有可路由 IPv6。防火墙放行节点 TCP 6053 和 HA TCP 6064。
 
 `encryption` 已改为可选。最简 SED 配置仅需 `thread_sed_api: {deep_sleep_id: sleep_control}`；常供电节点可直接使用 `thread_sed_api: {}`。
+
+## 手动发送迁移
+
+可以使用新的 `thread_sed_api.send`，不能直接保留旧 transporter.send 的字段。新 action 用 entity_id 指定单个或多个实体，使用 timeout / on_success / on_error 等待一个批次 ACK；省略 entity_id 时仍发送全部非 internal 实体。需要禁止自动上传时配置 `send_mode: manual`；默认 auto 保持当前行为。
+
+```yaml
+- wait_until:
+    condition:
+      thread_sed_api.is_ready:
+        id: sed_api
+    timeout: 3s
+- thread_sed_api.send:
+    id: sed_api
+    timeout: 2s
+    on_success:
+      - deep_sleep_nrf52.enter: sleep_control
+    on_error:
+      - logger.log: HA 批次确认失败
+```
+
+完整唤醒脚本及固定 run_duration 的处理见 [手动发送说明](README.md#手动-send-与-is_ready)。节点固件和 HA 集成都必须更新。
+
+## 单个/多个实体选择
+
+```yaml
+- thread_sed_api.send:
+    id: sed_api
+    entity_id: [sys_vdd, battery_level]  # 单个可写 entity_id: sys_vdd
+    timeout: 2s
+    on_success:
+      - logger.log: 所选实体已确认
+    on_error:
+      - logger.log: 未获得本批确认
+```
+
+这是一整个批次，不需要为每个实体拆 action。状态从已发布缓存读取；采样仍按原有 YAML 时序安排。使用 manual 模式可保证未选中的状态不会因自动发布额外上报。未选中的事件保留到后续发送。

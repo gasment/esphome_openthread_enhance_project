@@ -30,6 +30,7 @@ class PlainPeer(NativePeer):
             async def send(ident,message):
                 data=message.SerializeToString()
                 writer.write(b'\0'+varint(len(data))+varint(ident)+data);await writer.drain()
+            self.send = send
             while True:
                 if await reader.readexactly(1) != b'\0': return
                 size=await read_varint(reader); ident=await read_varint(reader)
@@ -44,6 +45,8 @@ class PlainPeer(NativePeer):
                     msg=pb.HomeassistantActionRequest(service='thread_sed.session')
                     msg.data.add(key='schema',value='plain-v1');msg.data.add(key='sleep_seconds',value='30')
                     await send(35,msg)
+                elif ident==38:
+                    await send(39,pb.SubscribeHomeAssistantStateResponse(entity_id='thread_sed.control'))
                 elif ident==20: await send(25,pb.SensorStateResponse(key=7,state=21.5))
                 elif ident==40:
                     msg=pb.HomeAssistantStateResponse();msg.ParseFromString(data);self.controls.append(msg.state)

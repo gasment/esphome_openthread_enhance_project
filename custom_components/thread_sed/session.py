@@ -43,6 +43,7 @@ class Session:
         self.sleep_seconds = 0
         self.event_seen = {}
         self._control_tasks = set()
+        self._control_lock = asyncio.Lock()
 
     async def load(self):
         saved = await self.store.async_load() or {}
@@ -102,7 +103,7 @@ class Session:
         def service(call):
             if call.service == 'thread_sed.session':
                 if not metadata.done(): metadata.set_result(call.data)
-            elif call.service in ('thread_sed.sleep', 'thread_sed.event') and self.client is client:
+            elif call.service in ('thread_sed.sleep', 'thread_sed.event', 'thread_sed.batch_event', 'thread_sed.batch') and self.client is client:
                 task = self.hass.async_create_task(self.control(client, call))
                 self._control_tasks.add(task)
                 task.add_done_callback(self._control_tasks.discard)
@@ -135,7 +136,10 @@ class Session:
             self.online, self.sleep_until = True, 0
             self.sleep_indefinite = False
             client.subscribe_states(self.state)
-            client.subscribe_home_assistant_states(lambda *_: None)
+            def control_subscription(entity_id, attribute):
+                if entity_id == 'thread_sed.control' and self.client is client:
+                    client.send_home_assistant_state('thread_sed.control',None,'ready')
+            client.subscribe_home_assistant_states(control_subscription)
             self.changed()
         except BaseException:
             await client.disconnect(force=True)
@@ -145,6 +149,13 @@ class Session:
             self.connecting = False
 
     async def control(self, client, call):
+        # Control messages follow TCP order, including all batch events before
+        # the ending marker. Serialize asynchronous storage and ACK handling.
+        async with self._control_lock:
+            if client is not self.client: return
+            await self._control_unlocked(client,call)
+
+    async def _control_unlocked(self, client, call):
         try:
             if call.service == 'thread_sed.sleep':
                 # State callbacks write HA state synchronously before this task.
@@ -153,15 +164,27 @@ class Session:
                 self.sleep_indefinite = self.sleep_seconds == 0
                 await self.save()
                 client.send_home_assistant_state('thread_sed.control', None, token)
-            elif call.service == 'thread_sed.event':
+            elif call.service == 'thread_sed.batch':
+                token = call.data['token']
+                if not token or len(token)>80: raise ValueError('Invalid batch token')
+                await self.save()
+                client.send_home_assistant_state('thread_sed.control',None,f'batch:{token}')
+            elif call.service in ('thread_sed.event','thread_sed.batch_event'):
                 boot, seq, key, event_type = call.data['token'].split(':', 3)
                 seq = int(seq)
-                if seq > self.event_seen.get(boot, -1):
-                    self.event_seen = {boot:seq}  # bounded to latest device boot
+                # Different event entities may be sent in separate batches.
+                # Track their watermarks separately so selecting B before A
+                # cannot suppress older, still-unsent events belonging to A.
+                identity = f'{boot}:{key}'
+                legacy = self.event_seen.get(boot,-1)
+                if seq > self.event_seen.get(identity,legacy):
+                    self.event_seen = {k:v for k,v in self.event_seen.items() if k == boot or k.startswith(f'{boot}:')}
+                    self.event_seen[identity] = seq
                     self.states[(0, int(key))] = model.Event(key=int(key), event_type=event_type)
                     self.changed((0, int(key)))
-                    await self.save()
-                client.send_home_assistant_state('thread_sed.control', None, f'event:{boot}:{seq}')
+                    if call.service == 'thread_sed.event': await self.save()
+                if call.service == 'thread_sed.event':
+                    client.send_home_assistant_state('thread_sed.control', None, f'event:{boot}:{seq}')
         except (APIConnectionError, ValueError, KeyError):
             _LOGGER.debug('Session control interrupted for %s', self.mac)
 

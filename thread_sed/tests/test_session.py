@@ -69,7 +69,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         await self.session.control(self.session.client,call)
         await self.session.control(self.session.client,call)
         self.assertEqual(seen.count((0,8)),1)
-        self.assertEqual(self.session.store.value['event_seen'],{'555':1})
+        self.assertEqual(self.session.store.value['event_seen'],{'555:8':1})
         await asyncio.sleep(.03)
         self.assertEqual(self.node.controls.count('event:555:1'),2)
     async def test_cached_models_roundtrip(self):
@@ -110,5 +110,26 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             await self.session.close()
             await listener.close()
             task.cancel(); await asyncio.gather(task,return_exceptions=True)
+
+    async def test_ready_handshake_roundtrip(self):
+        await self.connect()
+        async with asyncio.timeout(2):
+            while 'ready' not in self.node.controls:
+                await asyncio.sleep(.01)
+
+    async def test_batch_ack_over_native_connection(self):
+        from aioesphomeapi import api_pb2 as pb
+        await self.connect()
+        event=pb.HomeassistantActionRequest(service='thread_sed.batch_event')
+        event.data.add(key='token',value='789:1:8:single')
+        marker=pb.HomeassistantActionRequest(service='thread_sed.batch')
+        marker.data.add(key='token',value='456:1')
+        await self.node.send(35,event)
+        await self.node.send(35,marker)
+        async with asyncio.timeout(2):
+            while 'batch:456:1' not in self.node.controls:
+                await asyncio.sleep(.01)
+        self.assertNotIn('event:789:1',self.node.controls)
+        self.assertEqual(self.session.store.value['event_seen'],{'789:8':1})
 
 if __name__=='__main__': unittest.main()

@@ -250,6 +250,7 @@ void APIConnection::destroy_active_iterator_() {
       break;
   }
   this->active_iterator_ = ActiveIterator::NONE;
+  this->sed_selected_entities_ = nullptr;
 }
 
 void APIConnection::begin_iterator_(ActiveIterator type) {
@@ -396,7 +397,7 @@ void APIConnection::process_active_iterator_() {
   if (this->active_iterator_ == ActiveIterator::LIST_ENTITIES) {
     if (this->iterator_storage_.list_entities.completed()) {
       this->destroy_active_iterator_();
-      if (this->flags_.state_subscription) {
+      if (this->flags_.state_subscription && !this->parent_->sed_manual_send()) {
         this->begin_iterator_(ActiveIterator::INITIAL_STATE);
       } else {
         this->finalize_iterator_sync_();
@@ -2149,6 +2150,17 @@ void APIConnection::on_ping_request() {
     this->on_fatal_error();
   }
 }
+void APIConnection::on_subscribe_states_request() {
+  this->flags_.state_subscription = true;
+  this->parent_->sed_auto_published(this);
+  if (!this->parent_->sed_manual_send() && this->active_iterator_ == ActiveIterator::NONE)
+    this->begin_iterator_(ActiveIterator::INITIAL_STATE);
+}
+void APIConnection::sed_begin_snapshot(const std::vector<EntityBase *> *entities) {
+  this->begin_iterator_(ActiveIterator::INITIAL_STATE);
+  this->sed_selected_entities_ = entities;
+}
+
 void APIConnection::on_device_info_request() {
   if (!this->send_device_info_response_()) {
     this->on_fatal_error();
@@ -2176,6 +2188,10 @@ void APIConnection::on_home_assistant_state_response(const HomeAssistantStateRes
     const_cast<char *>(msg.state.c_str())[msg.state.size()] = '\0';
   }
 
+  if (msg.entity_id == "thread_sed.control") {
+    this->parent_->sed_control(this, msg.state);
+    return;
+  }
   for (auto &it : this->parent_->get_state_subs()) {
     if (msg.entity_id != it.entity_id) {
       continue;
@@ -2286,6 +2302,7 @@ bool APIConnection::send_homeassistant_action(const HomeassistantActionRequest &
     return false;
   if (!this->send_message(call)) {
     API_LOG_MSG_DROPPED(TAG, "Action request");
+    return false;
   }
   return true;
 }

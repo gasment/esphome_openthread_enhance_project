@@ -26,3 +26,27 @@ Omitting encryption selects the native plaintext protobuf framing and does not c
 For reverse TCP the device first writes exactly 24 bytes: ASCII `TSED1 ` + the 17-byte colon-separated MAC + LF. This prefix is routing metadata, not authentication. The HA listener peeks to select an existing config entry, rejects a transport/configuration mismatch, then consumes exactly the prefix before passing the socket to the native client. Following native frames are never consumed by the router. Encrypted entries never silently downgrade to plaintext.
 
 The firmware accepts dial-back target Hello in explicitly configured plaintext mode as well as authenticated Noise mode. Entity state, schema, event ACK and sleep ACK messages are identical above the transport layer.
+
+## Ready handshake and manual batches
+
+After schema processing and registering all subscriptions, HA responds to the reserved control subscription with HomeAssistantStateResponse `ready`. The node records this on that exact APIConnection. An accepted native Hello alone is not ready. is_ready also requires the initial iterator and deferred state queue to be idle and no send already pending.
+
+send_mode defaults to auto. In manual mode, native SubscribeStates and later entity publishes do not upload state; the send action explicitly runs the existing initial-state iterator once. Event generation is always captured into the bounded RAM queue. A send includes only events with sequence <= the sequence recorded at its start. Those use HomeassistantActionRequest service `thread_sed.batch_event` with the existing event token, without individual ACKs.
+
+After the state iterator/deferred batch drains and included events are written, the node sends `thread_sed.batch`, data token `random_u32:sequence`. HA serializes service-control processing, handles earlier events, saves its state/schema/dedup cache, then replies on thread_sed.control with `batch:<token>`. This is one application ACK for the batch, in addition to TCP's ordinary reliability. The node accepts it only from the selected connection after its marker was written; stale IDs or other connections cannot complete the action. No application packet retransmission layer is added.
+
+Completion invokes the originating action's on_success/on_error branch, whose continuation preserves YAML order even when the branch contains asynchronous actions. A stopped script cancels its wait without later callbacks; already transmitted bytes cannot be recalled. Disconnect, timeout or native send failure retain unconfirmed events. Only one pending send is allowed. The automatic sleep guard waits for a pending send, but manual mode sleep itself does not implicitly transmit unsent states/events.
+
+## Entity selection within a batch
+
+The send action accepts entity_id as either one ESPHome entity ID or a nonempty list of IDs, resolved to EntityBase pointers at code generation. The native InitialStateIterator still advances over registered entities, but skips serialization for unselected pointers. Pointer identity avoids confusing equal object-id hashes in different entity objects. Omitting entity_id retains a full state iteration. Internal and unsupported entities are rejected rather than silently acknowledging a missing state.
+
+The batch owns its selection for the iterator lifetime. Selected queued events share the same batch ACK; removal requires both sequence <= the starting cutoff and membership in the selection. Other events remain queued. HA deduplication is now per boot and event-entity key, retaining the legacy global watermark as a fallback for existing stored entries. This permits selecting B with sequence 2 before A with sequence 1 without suppressing A when it is sent later. No additional entity list is added to network packets; states retain their native keys and the ending marker still yields one ACK.
+
+## Opt-in automatic report confirmation
+
+When component on_ack/on_ack_error automation is configured in auto mode, each accepted native automatic publish increments a local generation. The initial SubscribeStates sync also starts a confirmation cycle. Once the native iterator/deferred queue and existing event ACK queue drain, the node sends the existing thread_sed.batch marker with an auto:<random>:<sequence> token. HA's existing batch:<token> reply is sufficient; there is no new wire format or HA setting.
+
+The marker freezes its covered generation. Later updates remain outstanding even if the marker's ACK arrives. Matching requires the current connection, outstanding marker and exact token. The component callback receives batch_id/elapsed_ms/has_pending on success or batch_id/reason on failure. No snapshot replay is introduced for automatic confirmation, and explicit send snapshots do not themselves enter this callback path. Without configured hooks the monitor and its additional markers are disabled.
+
+A valid application ACK takes precedence over a subsequent connection close. An unconfirmed later write failure is retained for its own cycle. Callback automations execute after resetting transaction state and can publish new values or request sleep. Sleep-marker emission waits for pending automatic confirmation, while the original bounded sleep deadline still prevents an unavailable peer from holding the node awake forever. User-requested asynchronous callback actions are awaited before sleeping.

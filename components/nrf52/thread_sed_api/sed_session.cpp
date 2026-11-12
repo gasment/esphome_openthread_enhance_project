@@ -9,30 +9,47 @@ namespace sed_ot = esphome::openthread_nrf52;
 namespace sed_ot = esphome::openthread;
 #endif
 #include <openthread/link.h>
+#include <cstring>
 namespace esphome::thread_sed_api {
-bool APIServer::sed_send(const char *service, const std::string &value) {
+bool APIServer::sed_send_to(APIConnection *client, const char *service, const std::string &value) {
   HomeassistantActionRequest call;
   call.service = StringRef(service);
   call.data.init(1);
   HomeassistantServiceMap item;
   item.key = StringRef::from_lit("token");
-  // send_homeassistant_action encodes synchronously; value outlives each send.
-  item.value = StringRef(value);
+  item.value = StringRef(value);  // Encoded synchronously before value expires.
   call.data.push_back(item);
+  if (!client->sed_flush_ready()) return false;
+  const bool queued = client->send_homeassistant_action(call);
+  if (std::strcmp(service, "thread_sed.event") == 0) this->sed_auto_published(client, queued);
+  return queued;
+}
+bool APIServer::sed_send(const char *service, const std::string &value) {
   bool sent = false;
-  for (auto &client : this->active_clients()) {
-    if (client->sed_flush_ready()) sent |= client->send_homeassistant_action(call);
-  }
+  for (auto &client : this->active_clients()) sent |= this->sed_send_to(client.get(), service, value);
   return sent;
 }
-void APIServer::sed_control(StringRef value) {
+void APIServer::sed_control(APIConnection *client, StringRef value) {
+  if (value == "ready") {
+    if (client->is_authenticated() && client->flags_.state_subscription && client->flags_.service_call_subscription)
+      client->sed_ready_ = true;
+    return;
+  }
+  if (!client->sed_session_ready()) return;
+  if (this->sed_auto_pending() && this->sed_auto_waiting_ && !this->sed_auto_disconnected_ &&
+      client == this->sed_auto_client_ && value == "batch:" + this->sed_auto_token_)
+    this->sed_auto_acked_ = true;
+  if (this->sed_batch_done_ && !this->sed_batch_disconnected_ && client == this->sed_batch_client_ &&
+      this->sed_batch_marker_sent_ && value == "batch:" + this->sed_batch_token_)
+    this->sed_batch_acked_ = true;
   if (value == std::to_string(this->sed_token_)) this->sed_sleep_ack_ = true;
-  if (!this->sed_events_.empty()) {
+  if (!this->sed_manual_send_ && !this->sed_events_.empty()) {
     const std::string ack = "event:" + std::to_string(this->sed_boot_) + ":" + std::to_string(this->sed_events_.front().sequence);
     if (value == ack) { this->sed_events_.erase(this->sed_events_.begin()); this->sed_event_sent_ = 0; }
   }
 }
 bool APIServer::sed_sleep_guard() {
+  if (this->sed_batch_done_ || this->sed_auto_callbacks_running()) return false;
   const uint32_t now = millis();
   if (!this->sed_sleep_pending_) {
     this->sed_sleep_pending_ = true; this->sed_sleep_ack_ = false;
@@ -42,6 +59,10 @@ bool APIServer::sed_sleep_guard() {
   if (!this->sed_sleep_ack_) ESP_LOGW("thread_sed_api", "Sleep delivery deadline expired; latest states will resync on wake");
   this->sed_poll(false);
   if (this->sed_fast_poll_) return false;
+  if (this->sed_auto_pending()) {
+    this->sed_auto_finish(false, "sleep_deadline");
+    if (this->sed_auto_callbacks_running()) return false;
+  }
   this->sed_sleep_finishing_ = true;
   for (auto &client : this->active_clients()) client->on_fatal_error();
   return true;
@@ -74,23 +95,25 @@ void APIServer::sed_poll(bool fast) {
   } else if (otLinkSetPollPeriod(instance, this->sed_saved_poll_) != OT_ERROR_NONE) return;
   this->sed_fast_poll_ = fast;
 }
-void APIServer::sed_queue_event(uint32_t key, StringRef type) {
+void APIServer::sed_queue_event(EntityBase *entity, StringRef type) {
   if (this->sed_boot_ == 0) this->sed_boot_ = random_uint32();
   if (this->sed_events_.size() >= 32) {
     ESP_LOGW("thread_sed_api", "Event queue full; newest event dropped"); return;
   }
-  this->sed_events_.push_back({++this->sed_event_sequence_, key, std::string(type.c_str(), type.size())});
+  this->sed_events_.push_back({++this->sed_event_sequence_, entity->get_object_id_hash(), std::string(type.c_str(), type.size()), entity});
   // A newly captured event invalidates an outstanding sleep marker.
   if (this->sed_sleep_pending_) { this->sed_sleep_ack_ = false; this->sed_token_ = random_uint32(); this->sed_marker_sent_ = 0; }
 }
 void APIServer::sed_tick() {
+  this->sed_auto_tick();
+  this->sed_batch_tick();
 #ifdef USE_THREAD_SED_SLEEP
   auto *sleep_check = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
   if (sleep_check != nullptr && !sleep_check->is_pending() && !sleep_check->is_sleeping() && this->sed_sleep_pending_) this->sed_wake();
 #endif
   if (this->sed_sleep_finishing_) { this->sed_poll(false); return; }
   this->sed_poll(!this->sed_sleep_pending_ || !this->sed_sleep_ack_);
-  if (!this->sed_events_.empty() && (this->sed_event_sent_ == 0 || millis() - this->sed_event_sent_ >= 500)) {
+  if (!this->sed_manual_send_ && !this->sed_events_.empty() && (this->sed_event_sent_ == 0 || millis() - this->sed_event_sent_ >= 500)) {
     const auto &event = this->sed_events_.front();
     const std::string token = std::to_string(this->sed_boot_) + ":" + std::to_string(event.sequence) + ":" + std::to_string(event.key) + ":" + event.type;
     if (this->sed_send("thread_sed.event", token)) this->sed_event_sent_ = millis();
@@ -99,7 +122,7 @@ void APIServer::sed_tick() {
   auto *sleep = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
   if (sleep != nullptr && !sleep->is_pending() && this->sed_sleep_pending_) this->sed_wake();
 #endif
-  if (this->sed_sleep_pending_ && !this->sed_sleep_ack_ && this->sed_events_.empty() &&
+  if (this->sed_sleep_pending_ && !this->sed_sleep_ack_ && !this->sed_auto_pending() && (this->sed_manual_send_ || this->sed_events_.empty()) &&
       (this->sed_marker_sent_ == 0 || millis() - this->sed_marker_sent_ >= 500)) {
     if (this->sed_send("thread_sed.sleep", std::to_string(this->sed_token_))) this->sed_marker_sent_ = millis();
   }
