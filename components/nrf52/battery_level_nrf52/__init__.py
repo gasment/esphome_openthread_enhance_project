@@ -1,1 +1,1 @@
-"""Voltage-based battery estimate, sampled explicitly across System ON wakes."""
+"""Battery estimate with component-owned nRF52/Zephyr SAADC sampling."""

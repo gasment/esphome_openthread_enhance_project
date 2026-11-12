@@ -128,3 +128,20 @@
 - 18:12 故障的 MMFAR=0x200177f8 落在当前 ELF 主线程栈保护区；主栈对象起点 0x20017780，可用区起点 0x20017800，原预算 4096 字节。
 - thread_sed_api 将 nRF52 主线程栈最低预算提高到 8192 字节，在平台代码生成后合并，保留更大预算。ESP32 不变，用户 YAML 不变。
 - 诊断保护继续保留；配置与代码生成验证后仍需用户上板确认。连接超时属于后续需单独验证的网络可达性问题。
+
+
+### 循环重启根因修复：电量更新递归
+
+- 通过 SWD 在 z_arm_fault 入口捕获现有固件 RAM/寄存器，主栈呈现重复调用链：BatteryLevel::update → ADC publish_state → on_value 的 component.update → BatteryLevel::update。此前主栈越界判断成立，但增加预算无法解决无限递归，8 KB 扩容已撤回。
+- battery_level_nrf52::update 增加组件级重入保护；采样/发布期间同步回调再次更新同一组件时直接返回。作用域守卫保证正常结束、无效采样等提前返回后均解除保护。
+- 保留硬件采样、ADC 状态发布、分次平均和原 on_value 自动化；无需改用户 YAML。后续独立更新不受影响。
+- 实际配置和代码生成可验证；固件编译及修复后上板验证仍由用户执行，当前未声明硬件验证完成。
+
+
+### battery_level_nrf52 内置 ADC 重构（破坏性配置更新）
+
+- 移除外部 ADCSensor / voltage_id 依赖，组件直接初始化和读取 Zephyr SAADC，拥有独立 DT io-channels 节点；不再加载官方 adc 平台。
+- 新增 adc 子项（pin、samples、sampling_mode、voltage_multiplier）及可选 voltage 输出实体。外层 samples 仍累计多次有效更新，不变成一次唤醒连续采样。
+- 电压与电量共享更新时序，驱动错误和无效读数不污染累计，发布阶段保留重入保护，防止用户自动化同步回调形成递归。
+- 已迁移本地 light-bt-stair 的 sensor.yaml，保留 sys_vdd、battery_level 和名称，统一为原电压采样的 10s 周期。完整带注释 YAML diff 见 components/nrf52/battery_level_nrf52/README.md。
+- 不运行固件编译；新驱动接线与电压精度仍待上板验证。

@@ -184,20 +184,7 @@ async def to_code(config):
     if CORE.is_nrf52:
         from esphome.components.zephyr import zephyr_add_prj_conf
         zephyr_add_prj_conf('NET_TCP', True)
-        CORE.add_job(_configure_zephyr_main_stack)
     cg.add_global(ns.using)
-
-
-async def _configure_zephyr_main_stack():
-    from esphome.components.zephyr import zephyr_data
-
-    # OpenThread requires 4096 bytes. The native TCP API, ESPHome callbacks
-    # and logging run on that same main thread and need a larger budget.
-    # Apply a minimum after platform codegen; preserve any larger request.
-    # This intentionally raises OpenThread's already-required lower budget.
-    conf = zephyr_data()['prj_conf'].setdefault('', {})
-    previous, _ = conf.get('CONFIG_MAIN_STACK_SIZE', (0, False))
-    conf['CONFIG_MAIN_STACK_SIZE'] = (max(int(previous), 8192), True)
 
 
 # Upstream's optional translation units must follow this fork's feature flags.
