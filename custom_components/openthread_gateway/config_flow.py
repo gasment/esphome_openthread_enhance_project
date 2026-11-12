@@ -1,7 +1,13 @@
 """Native HA setup and runtime admission/entity selection. Node changes never reload the entry."""
 import ipaddress
 import secrets
-import probatio as vol
+try:
+    import probatio as vol
+except ModuleNotFoundError as err:
+    if err.name != "probatio":
+        raise
+    # HA 2026.6 uses voluptuous; newer HA uses the compatible probatio API.
+    import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback

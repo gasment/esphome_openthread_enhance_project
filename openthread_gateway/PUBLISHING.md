@@ -31,7 +31,7 @@
 4. 创建 GitHub Release，首版 tag 使用 `0.1.0`，与 manifest 的 `version` 一致。后续先同步修改版本，再发布相同 tag 的 Release。无需额外上传 ZIP，HACS / Marketplace 从仓库标准目录安装运行文件。
 5. 在 HACS / Marketplace 中添加 `https://github.com/gasment/esphome_openthread_enhance_project`，类型选择 Integration，安装后重启 HA。尚无 Release 时 HACS 可以使用默认分支；建议日常更新发布正式 Release。
 
-`hacs.json` 的最低 HA 版本为 `2026.11.0`，与集成使用的 API 一致。通过 HACS 安装也不代表能在旧 HA 上运行。
+`hacs.json` 的最低 HA 版本为 `2026.6.0`。配置流程支持 HA 2026.6 使用的 `voluptuous`，同时保留新版 HA 的 `probatio` 支持，不额外安装两种库。最低版本声明和静态 API 核对不替代真实 HA 加载测试。
 
 ## 校验与范围
 
@@ -54,3 +54,11 @@ python -m unittest discover -s openthread_gateway/tests -v
 用户绑定与状态存放在 HA 的 `.storage`，位于集成安装目录之外，正常更新不会覆盖它们，不需要配置 `persistent_directory`。
 
 参考：[Marketplace 仓库结构](https://contributors.home-assistant.io/marketplace/reference/repository-structure/)、[发布自定义集成](https://contributors.home-assistant.io/marketplace/guides/integrations/)、[HACS 集成要求](https://hacs.dev/docs/publish/integration/)。
+
+## Repository structure is not compliant
+
+例如 `Repository structure for v2026.11.10 is not compliant` 中的 `v2026.11.10` 是 HACS 选中的仓库 tag/ref，不是最低 HA 版本。这条错误表示该 ref 下找不到可安装的 `custom_components/<domain>/` 目录。
+
+如果旧 Release 仍只有 ESPHome 组件或旧的 Integration 子目录，单独修改默认分支上的 `hacs.json` 无法修复旧 Release：先将当前目录结构推送，再让 HACS 下载包含新结构的分支或新 Release。推荐发布一个新的正式 Release，tag 与集成 manifest 的版本保持一致；已存在其他项目 Release 时，要核对 HACS 实际选中的版本，不要覆盖旧 tag。
+
+参考：[HACS 对目录结构的检查源码](https://github.com/hacs/integration/blob/main/custom_components/hacs/repositories/integration.py)、[HA 2026.6 配置流程源码](https://github.com/home-assistant/core/blob/2026.6.0/homeassistant/config_entries.py)。

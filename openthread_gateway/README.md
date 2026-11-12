@@ -6,7 +6,7 @@
 
 ## 安装
 
-面向 **Home Assistant Core 2026.11 或更新版本**，使用当前 HA 的配置流程、运行时数据和实体生命周期 API。
+面向 **Home Assistant Core 2026.6 或更新版本**，使用当前 HA 的配置流程、运行时数据和实体生命周期 API。
 
 ### HACS / Marketplace
 
