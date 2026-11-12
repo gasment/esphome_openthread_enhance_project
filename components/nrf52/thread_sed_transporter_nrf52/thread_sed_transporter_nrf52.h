@@ -261,6 +261,9 @@ class ThreadSedTransporter : public Component {
   bool queue_packet_(Packet *);
   void start_dns_();
   void reset_session_(bool new_request = true);
+  void recover_session_(const char *reason);
+  void log_link_(const char *reason);
+  uint32_t tx_ok_{0}, tx_failed_{0}, rx_valid_{0}, rx_invalid_{0}, ready_at_{0};
   void set_target_(const Packet &, const std::string &);
   void rebase_reports_();
   void queue_snapshot_();

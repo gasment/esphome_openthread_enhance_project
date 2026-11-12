@@ -60,3 +60,9 @@ ESP32 没有 deep_sleep_id，可设置 `sleep_for: 30min`，供 shutdown 公告�
 节点默认 `backend.discovery_timeout: 8s`、`timeout: 30s`；HELLO 重试保持独立的 1 秒间隔。旧版 2 秒 DNS 等待短于 ESP-IDF 5.5.6 BR 的 3 秒 mDNS 查询窗口，可能持续报 `ResponseTimeout (28)`，5 秒就绪预算也无法覆盖多步发现与解析。若 YAML 显式配置短等待，需要一并修改；正常保留会话的 System ON 唤醒不重复完整发现。
 
 DNS browse/resolve 超时属于服务发现阶段，不足以证明 HA 业务端口不通，也不能证明公告地址有误。先看新日志中的 DNS 服务器、实例数量与解析结果，再核对 HA 宿主机上是否确有公告 IPv6、LAN mDNS 是否能被 BR 收到。
+
+## 业务失联恢复修正
+
+ACK 耗尽不再立即删除可用 HA 地址。优先在最后已认证端点上用新 request_id 重建签名会话（5 秒），无响应才回退 DNS-SD，整个恢复仍受 timeout 预算限制。确认前不提交基线，重发仍使用冻结值。显式 discovery 保留强制刷新语义；解绑不会保留旧授权。
+
+长睡眠后启用 control_ready 会重新开始清醒心跳观察期，避免把睡眠时间算成连续心跳丢失。失联诊断记录真实 Thread 角色、poll、父节点 RSSI、累计 MAC/UDP 计数与选源地址。单凭 HA ACK 丢失不能断言 Thread detached；需要把新诊断与 HA/BR 日志或抓包对照。

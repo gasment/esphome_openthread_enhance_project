@@ -155,6 +155,7 @@ bool ThreadSedTransporter::send_(const otIp6Address &address, uint16_t port, con
       if (!success) otMessageFree(message);
     }
   }
+  if (success) ++tx_ok_; else ++tx_failed_;
   return success;
 }
 bool ThreadSedTransporter::target_valid_() const {
@@ -167,6 +168,46 @@ void ThreadSedTransporter::renew_target_() {
   // DNS TTL is not extended by application replies. Established sessions keep their
   // route until traffic fails; DNS refresh is only needed when establishing a route.
   retained.expires = now_ms_() + uint64_t(retained.ttl_s ? retained.ttl_s : 60) * 1000;
+}
+
+void ThreadSedTransporter::recover_session_(const char *reason) {
+  log_link_(reason);
+  if (!retained.port || !binding_.data.owner[0] || std::string(retained.gateway) != binding_.data.owner ||
+      (!expected_gateway_.empty() && expected_gateway_ != retained.gateway)) {
+    discovery(); return;
+  }
+  // DNS TTL expires discovery data, not the usability of an authenticated peer.
+  // Try the last working endpoint for five seconds before requiring DNS again.
+  reset_session_();
+  retained.expires = now_ms_() + 5000;
+  discovery_active_ = true; discovery_started_ = millis(); dns_at_ = 0;
+  ESP_LOGD(TAG, "Recovering HA session at cached endpoint first; DNS fallback after 5s");
+}
+void ThreadSedTransporter::log_link_(const char *reason) {
+  if (!ot_ || !ot_->is_lock_initialized()) return;
+  auto lock = openthread_nrf52::InstanceLock::try_acquire(0);
+  if (!lock || !lock.get_instance()) { ESP_LOGW(TAG, "HA recovery (%s): Thread lock unavailable", reason); return; }
+  auto *instance = lock.get_instance();
+  const auto mode = otThreadGetLinkMode(instance);
+  int8_t rssi = 127;
+  const auto parent_error = otThreadGetParentLastRssi(instance, &rssi);
+  ESP_LOGW(TAG, "HA recovery (%s): Thread role=%d rx_idle=%d poll=%ums parent_rssi=%d (%s)",
+      reason, int(otThreadGetDeviceRole(instance)), int(mode.mRxOnWhenIdle), unsigned(otLinkGetPollPeriod(instance)),
+      int(rssi), otThreadErrorToString(parent_error));
+  if (const auto *counters = otLinkGetCounters(instance)) {
+    ESP_LOGW(TAG, "  MAC tx=%u acked=%u polls=%u rx_data=%u cca_fail=%u; UDP sent=%u failed=%u auth_rx=%u rejected=%u drops=%u",
+        unsigned(counters->mTxTotal), unsigned(counters->mTxAcked), unsigned(counters->mTxDataPoll),
+        unsigned(counters->mRxData), unsigned(counters->mTxErrCca), unsigned(tx_ok_), unsigned(tx_failed_),
+        unsigned(rx_valid_), unsigned(rx_invalid_), unsigned(drops_.load()));
+  }
+  if (retained.port) {
+    char peer[64], source[64]; otIp6AddressToString(&retained.address, peer, sizeof(peer));
+    otMessageInfo info{}; info.mPeerAddr = retained.address; info.mPeerPort = retained.port;
+    const auto error = otIp6SelectSourceAddress(instance, &info);
+    otIp6AddressToString(&info.mSockAddr, source, sizeof(source));
+    ESP_LOGW(TAG, "  HA peer=[%s]:%u selected_source=%s (%s), last_reply=%ums ago",
+        peer, unsigned(retained.port), source, otThreadErrorToString(error), unsigned(millis() - last_gateway_reply_));
+  }
 }
 
 void ThreadSedTransporter::discovery() {
@@ -272,13 +313,13 @@ void ThreadSedTransporter::process_(const Packet &p) {
   if (p.internal) { process_dns_(p); return; }
   std::string signature, raw;
   auto *j = thread_ha::parse(p.data, p.size, signature, raw);
-  if (!j) return;
+  if (!j) { ++rx_invalid_; return; }
   const auto type = str(j, "type");
   bool endpoint = p.port == retained.port && std::memcmp(&p.peer, &retained.address, sizeof(p.peer)) == 0;
   bool discovered = false;
   for (const auto &e : endpoints_) if (now_ms_() < e.expires && e.port == p.port &&
       std::memcmp(&p.peer, &e.address, sizeof(p.peer)) == 0 && e.id == str(j, "backend_id")) discovered = true;
-  if (str(j, "device") != binding_.data.device || str(j, "session") != session_) { cJSON_Delete(j); return; }
+  if (str(j, "device") != binding_.data.device || str(j, "session") != session_) { ++rx_invalid_; cJSON_Delete(j); return; }
   if (type == "bind_offer") {
     const auto owner = str(j, "backend_id"), token = str(j, "binding_id"), secret = str(j, "secret");
     if (!discovered || str(j, "node") != node_ || str(j, "request_id") != request_nonce_ || signature != "-" ||
@@ -299,11 +340,15 @@ void ThreadSedTransporter::process_(const Packet &p) {
   }
   if (!binding_.data.owner[0] || str(j, "backend_id") != binding_.data.owner ||
       str(j, "binding_id") != binding_.data.token ||
-      !thread_ha::equal(signature, thread_ha::hmac(raw, binding_.data.secret))) { cJSON_Delete(j); return; }
+      !thread_ha::equal(signature, thread_ha::hmac(raw, binding_.data.secret))) { ++rx_invalid_; cJSON_Delete(j); return; }
+  ++rx_valid_;
   if (type == "binding_revoked") {
     if (endpoint || discovered) unbind_requested_ = true;
   } else if (type == "context_expired") {
-    if (endpoint) reset_session_();
+    if (endpoint) {
+      ESP_LOGD(TAG, "HA requested context renewal; preserving the peer address");
+      reset_session_(); retained.expires = now_ms_() + 5000; dns_at_ = 0;
+    }
   } else if (type == "bind_complete") {
     if (endpoint && str(j, "request_id") == request_nonce_) reset_session_();
   } else if (type == "session_offer") {
@@ -623,8 +668,8 @@ void ThreadSedTransporter::service_report_ack_() {
     if (!success && expired && !it->recovered) {
       it->recovered = it->recovering = true;
       it->recovery_at = now;
-      ESP_LOGW(TAG, "Report %u ACK attempts exhausted; rediscovering once", unsigned(it->id));
-      discovery();
+      ESP_LOGW(TAG, "Report %u ACK attempts exhausted; recovering session once", unsigned(it->id));
+      recover_session_("report ACK timeout");
       ++it; continue;
     }
     if (!success && !expired) {
@@ -695,11 +740,13 @@ void ThreadSedTransporter::presence_(bool ready, bool sleeping) {
 
 void ThreadSedTransporter::service_presence_() {
   const bool ready = ready_();
-  if (ready != last_ready_) { last_ready_ = ready; presence_dirty_ = true; }
+  if (ready != last_ready_) { last_ready_ = ready; presence_dirty_ = true; if (ready) ready_at_ = millis(); }
   if (discovery_active_ && (confirmed_ || uint32_t(millis() - discovery_started_) >= timeout_ms_)) discovery_active_ = false;
   if (ready || reporting_ || discovery_active_ || !pending_acks_.empty()) service_manifest_();
   if (confirmed_ && (presence_dirty_ || (ready && uint32_t(millis() - heartbeat_at_) >= heartbeat_ms_))) presence_(ready);
-  if (confirmed_ && ready && uint32_t(millis() - last_gateway_reply_) > heartbeat_ms_ * 3) discovery();
+  // A long sleeping interval is not three missed awake heartbeats.
+  if (confirmed_ && ready && uint32_t(millis() - ready_at_) > heartbeat_ms_ * 3 &&
+      uint32_t(millis() - last_gateway_reply_) > heartbeat_ms_ * 3) recover_session_("heartbeat timeout");
   if (confirmed_ && full_sync_pending_ && !reporting_ && requests_.empty() && pending_acks_.empty()) queue_snapshot_();
 }
 

@@ -72,3 +72,7 @@ nRF52 使用 deep_sleep_id 在睡前发送 sleeping/sleep_for_s 公告，读取�
 验证范围：两个平台最小配置通过 ESPHome 2026.10.2 的 config 验证；C++ 仅语法解析与 API 核对，未编译固件、未上板联调。详见 [SED 迁移说明](../../../openthread_gateway/SED_MIGRATION.md)。
 
 发现超时排查：错误码 28 表示 DNS 响应超时，还没有进入 HA 绑定。默认单次查询等待 8 秒、整轮任务就绪预算 30 秒；若旧 YAML 显式设置更短值，需要同步修改。ESP-IDF 5.5.6 的 BR mDNS 查询窗口为 3 秒，2 秒的节点超时会过早丢弃正常结果。日志会区分 browse/resolve，并打印 DNS 服务器、查询等待时间和最终 HA 端点。HA 公告 IPv6 必须属于 HA 宿主机，不应填写 BR 地址；Docker host 不会绕过 LAN 的 mDNS/VLAN/防火墙限制。
+
+业务 ACK/心跳失败恢复时，先保留最后成功的 HA 地址，尝试 5 秒签名 HELLO/会话重建，再回退 DNS-SD；不会因一次通信故障立即清空端点。显式 discovery 动作仍强制重新发现。长睡眠后重新进入 control_ready 时，重新计算清醒心跳观察窗口。
+
+恢复日志打印 Thread role（2=child）、实际 poll period、父节点 RSSI、累计 MAC/UDP 计数、HA 目标与选源结果，用于区分链路丢包和 HA/路由故障。SDK 中“初次以 MED 接入后切 SED”的短暂 detached 是既有模式切换行为，并不等于每次 System ON 休眠都会脱网。
