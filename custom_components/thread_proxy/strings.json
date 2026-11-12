@@ -1,0 +1,75 @@
+{
+  "title": "Thread Proxy",
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Bind a BR",
+        "description": "Enter a BR running thread_proxy_api. The binding can be saved while offline.",
+        "data": {
+          "host": "BR address",
+          "port": "API port",
+          "name": "Display name",
+          "noise_psk": "API encryption key (optional)"
+        }
+      },
+      "confirm": {
+        "title": "Bind {name}",
+        "description": "Bind {name} at {host}:{port}?",
+        "data": {
+          "noise_psk": "API encryption key (optional)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure BR binding",
+        "description": "Omit the key to keep it; submit an empty value to clear it.",
+        "data": {
+          "host": "BR address",
+          "port": "API port",
+          "name": "Display name",
+          "noise_psk": "API encryption key (optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "Invalid host address.",
+      "invalid_port": "Port must be between 1 and 65535.",
+      "invalid_key": "Key must be 32 bytes encoded as Base64.",
+      "invalid_input": "Invalid input.",
+      "already_configured": "This BR is already bound."
+    },
+    "abort": {
+      "already_configured": "This BR is already bound.",
+      "invalid_discovery": "Invalid proxy announcement.",
+      "unsupported_protocol": "Unsupported proxy protocol version."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Proxy status",
+        "state": {
+          "connecting": "Connecting",
+          "connected": "API connected",
+          "ready": "Proxy protocol verified",
+          "disconnected": "Disconnected",
+          "unsupported": "Proxy protocol unavailable",
+          "auth_error": "Authentication failed",
+          "identity_mismatch": "BR identity mismatch",
+          "duplicate_identity": "Duplicate BR binding"
+        }
+      }
+    },
+    "binary_sensor": {
+      "bound": {
+        "name": "Bound"
+      },
+      "api_connected": {
+        "name": "API connected"
+      },
+      "proxy_ready": {
+        "name": "Proxy protocol verified"
+      }
+    }
+  }
+}

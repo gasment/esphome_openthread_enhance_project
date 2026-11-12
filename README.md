@@ -28,6 +28,9 @@ features:
  -->
 # ESPHome OpenThread & Thread BR <br>Enhance Project
 
+> **Thread Proxy 0.5.0**：HA 侧 BR 发现、手工绑定及状态管理已提供；ESP32 BR 固件 `thread_proxy_api` 已提供管理协议，节点转发尚待实现，编译及上板测试待执行。安装与迁移见 [Thread Proxy](thread_proxy/README.md)，逻辑变更见 [更新日志](THREAD_PROXY_CHANGELOG.md)。原 Thread SED HA 代码保留在 `thread_sed/legacy_component`。
+
+
 * 此项目基于esphome为底板，依托esphome强大且方便集成的组件架构，拓展原有的OpenThread和OpenThread BR边缘路由功能，使其适应更多使用场景
 
 * esphome在2026.11.0 dev版开始支持Thread Border Router组件，如只需基础BR功能，可以等待官方组件正式上线
@@ -39,7 +42,7 @@ features:
 |项目|平台适配|功能|
 | :----------------------------------------------------: | :----------------------------------------------: | :---------------------------------------------: |
 |Thread边界路由|✅ESP32 ❌nRF52|负责Thread内外部的通讯转换|
-|Thread SED|✅ESP32 ✅nRF52|通过独立原生 API 接入 HA 的 Thread SED 集成|
+|Thread Proxy|HA 2026.11+|BR 发现、绑定与状态管理及 ESP32 管理端；节点转发待实现|
 |Thread节点-API模式|✅ESP32 ✅nRF52|接入Thread网络并直接连接到HA|
 |Thread节点-P2P|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
 |Thread节点-访问LAN/WAN|✅ESP32 ❌nRF52|Thread节点可访问外部网络资源|

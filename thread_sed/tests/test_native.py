@@ -11,7 +11,7 @@ from noise.connection import NoiseConnection
 from cryptography.exceptions import InvalidTag
 
 ROOT = Path(__file__).resolve().parents[2] if (Path(__file__).resolve().parent.name == 'tests') else Path(__file__).resolve().parent
-TRANSPORT = ROOT/'custom_components'/'thread_sed'/'transport.py'
+TRANSPORT = ROOT/'thread_sed'/'legacy_component'/'transport.py'
 if not TRANSPORT.exists(): TRANSPORT = Path(__file__).resolve().parent.parent/'transport.py'
 spec = importlib.util.spec_from_file_location('sed_transport',TRANSPORT)
 transport=importlib.util.module_from_spec(spec); spec.loader.exec_module(transport)

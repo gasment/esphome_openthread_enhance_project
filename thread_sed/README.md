@@ -1,3 +1,5 @@
+> **旧集成归档**：以下为历史 Thread SED 说明。活动 HA 组件已改为 [Thread Proxy](../thread_proxy/README.md)，旧源码位于 `thread_sed/legacy_component`，不再由 HACS 安装。
+
 # Thread SED
 
 面向 ESPHome Thread SED / REED 的 HA 自定义集成，设备组件仍为 `thread_sed_api`。0.4.0 默认使用 **IPv6 UDP + 批次 ACK**，保留 Protobuf 实体描述、动态实体增删、auto / manual 上报及指定实体的批量 send。日常唤醒不建立 TCP，不执行原生 API 握手，也不等待第二次休眠确认。

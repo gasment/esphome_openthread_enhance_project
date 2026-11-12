@@ -1,0 +1,75 @@
+{
+  "title": "Thread Proxy",
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "绑定 BR",
+        "description": "请输入配置了 thread_proxy_api 的 BR 地址。允许离线保存。",
+        "data": {
+          "host": "BR 地址",
+          "port": "API 端口",
+          "name": "显示名称",
+          "noise_psk": "API 加密密钥（可选）"
+        }
+      },
+      "confirm": {
+        "title": "接入 {name}",
+        "description": "接入位于 {host}:{port} 的 {name}？",
+        "data": {
+          "noise_psk": "API 加密密钥（可选）"
+        }
+      },
+      "reconfigure": {
+        "title": "修改 BR 绑定",
+        "description": "省略密钥保留原值；提交空值清除。",
+        "data": {
+          "host": "BR 地址",
+          "port": "API 端口",
+          "name": "显示名称",
+          "noise_psk": "API 加密密钥（可选）"
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "地址无效。",
+      "invalid_port": "端口应为 1–65535。",
+      "invalid_key": "密钥应为 32 字节 Base64。",
+      "invalid_input": "输入内容无效。",
+      "already_configured": "这个 BR 已绑定。"
+    },
+    "abort": {
+      "already_configured": "这个 BR 已绑定。",
+      "invalid_discovery": "无效的代理公告。",
+      "unsupported_protocol": "不支持此代理协议版本。"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "代理状态",
+        "state": {
+          "connecting": "正在连接",
+          "connected": "API 已连接",
+          "ready": "代理协议已验证",
+          "disconnected": "未连接",
+          "unsupported": "未提供兼容代理协议",
+          "auth_error": "认证失败",
+          "identity_mismatch": "BR 身份不符",
+          "duplicate_identity": "BR 重复绑定"
+        }
+      }
+    },
+    "binary_sensor": {
+      "bound": {
+        "name": "已绑定"
+      },
+      "api_connected": {
+        "name": "API 连接"
+      },
+      "proxy_ready": {
+        "name": "代理协议验证"
+      }
+    }
+  }
+}
