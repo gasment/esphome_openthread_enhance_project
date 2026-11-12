@@ -118,3 +118,6 @@
 - 已在本地 light-bt-stair/main.yaml 临时启用。固件编译与上板由用户执行。
 
 - 修正 RTT 诊断与 Thread OTA 的日志模式冲突：加载 swd_rtt_nrf52 时由其统一设置日志处理模式，OTA 不再强制 deferred；独立 OTA 保持原模式。
+
+
+- RTT fault_diagnostics 模式额外启用线程名称、硬件栈保护及栈哨兵，便于区分线程栈越界和其他内存损坏；不调整线程栈大小，正常模式不变。18:07 故障 PC 对应当前 ELF 的 `_kernel` 数据区，尚未定位最初的破坏来源。

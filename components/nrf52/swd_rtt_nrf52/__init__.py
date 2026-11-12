@@ -72,6 +72,15 @@ async def configure_rtt(fault_diagnostics=False):
         "LOG_BACKEND_UART": False,
     }
     if fault_diagnostics:
+        # Catch a stack crossing before it corrupts a saved return address or
+        # another thread's context. Do not change any thread's stack budget.
+        options.update({
+            "THREAD_NAME": True,
+            "THREAD_STACK_INFO": True,
+            "INIT_STACKS": True,
+            "HW_STACK_PROTECTION": True,
+            "STACK_SENTINEL": True,
+        })
         # These symbols are only available in deferred mode.
         for option in ("LOG_PROCESS_THREAD", "LOG_PROCESS_TRIGGER_THRESHOLD", "LOG_BUFFER_SIZE", "LOG_BLOCK_IN_THREAD"):
             options.pop(option)
