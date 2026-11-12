@@ -80,18 +80,20 @@ class UdpListener(asyncio.DatagramProtocol):
             identity=(packet.mac,packet.boot,packet.group,peer)
             now=monotonic()
             self.acknowledged={k:v for k,v in self.acknowledged.items() if now-v<60}
+            _LOGGER.debug('Thread SED %s group=%s DATA received: bytes=%s parts=%s',session.mac,packet.group,len(payload),packet.parts)
             if identity in self.acknowledged:
+                _LOGGER.debug('Thread SED %s group=%s duplicate DATA; replaying ACK',session.mac,packet.group)
                 self.send(session,ACK,peer,group=packet.group,payload=packet.boot)
                 return
             if identity in self.inflight or len(self.inflight)>=32: return
             self.inflight.add(identity)
-            task=asyncio.create_task(self._deliver(session,packet,payload,peer,identity))
+            task=asyncio.create_task(self._deliver(session,packet,payload,peer,identity,received_at=now))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
         except (ValueError,InvalidTag,DecodeError,UnicodeError):
             _LOGGER.debug('Discarded invalid Thread SED datagram',exc_info=True)
 
-    async def _deliver(self,session,packet,payload,peer,identity):
+    async def _deliver(self,session,packet,payload,peer,identity,received_at=None):
         try:
             if session.stopping: return
             processing_started=monotonic()
@@ -106,7 +108,7 @@ class UdpListener(asyncio.DatagramProtocol):
             self.acknowledged[identity]=monotonic()
             if len(self.acknowledged)>256: self.acknowledged.pop(next(iter(self.acknowledged)))
             self.send(session,ACK,peer,group=packet.group,payload=packet.boot)
-            _LOGGER.debug('Thread SED %s group=%s processed and ACK queued in %.1f ms',session.mac,packet.group,(monotonic()-processing_started)*1000)
+            _LOGGER.debug('Thread SED %s group=%s ACK queued: scheduling=%.1f ms processing=%.1f ms',session.mac,packet.group,(processing_started-(received_at if received_at is not None else processing_started))*1000,(monotonic()-processing_started)*1000)
             self.deferred.pop(identity,None)
             if packet.flags&2:
                 # Replay only fully reassembled groups after descriptors exist.
@@ -116,7 +118,7 @@ class UdpListener(asyncio.DatagramProtocol):
                         self.deferred.pop(key,None)
                     elif node is session:
                         self.deferred.pop(key,None)
-                        await self._deliver(node,message,body,address,key)
+                        await self._deliver(node,message,body,address,key,received_at=stamp)
         except (ValueError,InvalidTag,DecodeError,KeyError,TypeError):
             _LOGGER.debug('Thread SED batch rejected',exc_info=True)
         finally:

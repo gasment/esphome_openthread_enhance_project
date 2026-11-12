@@ -41,7 +41,7 @@ thread_sed_api:
       - deep_sleep_nrf52.enter: sleep_control
 ```
 
-`entity_id` 支持一个 ID 或多个混合实体 ID；省略时发送全部可发布状态及本批事件。`is_ready` 表示 Thread 已连接、存在已学习的 HA 端点且没有发送/描述同步在占用；它不通过握手证明 HA 在线，最终以 send 的 ACK 判断交付。
+`entity_id` 支持一个 ID 或多个混合实体 ID；省略时发送全部可发布状态及本批事件。 手动 send 的快照在当前自动化回调返回后的下一轮建立，因此 `on_event` 中直接调用也会包含本次事件，不需要额外 delay；快照边界之后的新事件留给下批。`is_ready` 表示 Thread 已连接、存在已学习的 HA 端点且没有发送/描述同步在占用；它不通过握手证明 HA 在线，最终以 send 的 ACK 判断交付。
 
 自动模式继续支持：
 

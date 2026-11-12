@@ -223,6 +223,38 @@ class UdpTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(info.name,'test-sed')
 
+    async def test_first_event_after_ha_and_node_restart_is_delivered_once(self):
+        await self.establish()
+        def event(token):
+            return api_pb2.HomeassistantActionRequest(service='thread_sed.batch_event',data=[
+                api_pb2.HomeassistantServiceMap(key='token',value=token)])
+        await self.transmit(body(event('111:9:8:single')))
+        await self.receive()
+        await self.session.save()
+        saved=self.session.store.value
+        previous=self.session
+        key=previous.udp_key
+        await previous.close()
+        self.session=udp_session.UdpSession(previous.hass,previous.entry)
+        self.session.udp_key=key
+        self.session.store.value=saved
+        await self.session.load()
+        self.session.listener=self.listener
+        self.listener.sessions[MAC]=self.session
+        self.encoder=wire.Encoder(MAC,key)  # A new node transport lifetime.
+        self.assertNotIn((0,8),self.session.states)  # Events are never replayed from disk.
+        changes=[]; self.session.callbacks.add(changes.append)
+        payload=body(event('222:1:8:hold'))  # First event in the new node boot.
+        group,_=await self.transmit(payload)
+        ack=await self.receive()
+        self.assertEqual(ack.group,group)
+        self.assertEqual(self.session.states[(0,8)].event_type,'hold')
+        self.assertEqual(changes.count((0,8)),1)
+        # A retry with fresh packet sequence must still not repeat the event.
+        await self.transmit(payload,group=group)
+        await self.receive()
+        self.assertEqual(changes.count((0,8)),1)
+
     async def test_onboarding_port_is_distinct_from_business_probe_port(self):
         key=self.session.udp_key
         port=self.node.getsockname()[1]

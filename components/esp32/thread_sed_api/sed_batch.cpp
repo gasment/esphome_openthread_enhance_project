@@ -54,7 +54,7 @@ bool APIServer::sed_begin_batch(const void *owner, uint32_t timeout, uint32_t re
   this->sed_batch_retries_left_ = resend;
   this->sed_batch_delivery_error_ = nullptr;
   this->sed_batch_token_ = std::to_string(random_uint32()) + ":" + std::to_string(++this->sed_batch_sequence_);
-  this->sed_batch_cutoff_ = this->sed_event_sequence_;
+  this->sed_batch_snapshot_started_ = false;
   this->sed_batch_event_cursor_ = 0;
   this->sed_batch_marker_sent_ = false;
   this->sed_batch_acked_ = false;
@@ -63,7 +63,9 @@ bool APIServer::sed_begin_batch(const void *owner, uint32_t timeout, uint32_t re
   this->sed_sleep_ack_ = false;
   this->sed_marker_sent_ = 0;
   this->sed_poll(true);  // Shorten polling before the first DATA/ACK exchange.
-  target->sed_begin_snapshot(this->sed_batch_entities_.empty() ? nullptr : &this->sed_batch_entities_);
+  // Event::trigger() runs on_event automations BEFORE ControllerRegistry
+  // notifies this API. Capture the batch in sed_batch_tick(), after the current
+  // callback stack has returned and the triggering event has been enqueued.
   ESP_LOGD("thread_sed_api", "send %s started", this->sed_batch_token_.c_str());
   return true;
 }
@@ -118,6 +120,20 @@ void APIServer::sed_batch_tick() {
   if (this->sed_batch_delivery_error_ != nullptr) {
     this->sed_finish_batch(false, this->sed_batch_delivery_error_); return;
   }
+  if (!this->sed_batch_snapshot_started_) {
+    if (millis()-this->sed_batch_started_>=5000U) { this->sed_finish_batch(false,"snapshot_stalled"); return; }
+    // A PROBE can start descriptor sync between the action and this deferred
+    // snapshot. Wait for it rather than destroying its active iterator.
+    if (!this->sed_batch_client_->sed_flush_ready()) return;
+#ifdef USE_THREAD_SED_API_UDP
+    if (!this->udp_.can_flush()) return;
+#endif
+    this->sed_batch_cutoff_=this->sed_event_sequence_;
+    this->sed_batch_snapshot_started_=true;
+    this->sed_batch_client_->sed_begin_snapshot(this->sed_batch_entities_.empty()?nullptr:&this->sed_batch_entities_);
+    ESP_LOGD("thread_sed_api","send snapshot: event cutoff=%u",static_cast<unsigned>(this->sed_batch_cutoff_));
+    return;
+  }
   if (this->sed_batch_marker_sent_) {
 #ifndef USE_THREAD_SED_API_UDP
     if (millis()-this->sed_batch_ack_started_ >= this->sed_batch_timeout_) {
@@ -144,7 +160,7 @@ void APIServer::sed_batch_tick() {
 #endif
 
   // In manual mode, events share the one batch ACK. Keep them in RAM until it
-  // arrives; events recorded after send() began belong to the next batch.
+  // arrives; events recorded after the deferred snapshot boundary belong to the next batch.
   if (this->sed_manual_send_) {
     for (auto &event : this->sed_events_) {
       if (event.sequence <= this->sed_batch_event_cursor_ || event.sequence > this->sed_batch_cutoff_ || !this->sed_batch_wants(event.entity)) continue;

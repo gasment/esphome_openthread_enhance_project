@@ -449,6 +449,7 @@ class APIServer final : public Component
   uint16_t sed_batch_resend_{0}, sed_batch_retries_left_{0};
   const char *sed_batch_delivery_error_{nullptr};
   uint32_t sed_batch_cutoff_{0}, sed_batch_event_cursor_{0};
+  bool sed_batch_snapshot_started_{false};
   bool sed_batch_marker_sent_{false}, sed_batch_acked_{false}, sed_batch_disconnected_{false};
   struct SedEvent { uint32_t sequence; uint32_t key; std::string type; EntityBase *entity; };
   std::vector<SedEvent> sed_events_;

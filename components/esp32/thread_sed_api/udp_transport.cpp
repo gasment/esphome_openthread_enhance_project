@@ -154,9 +154,10 @@ void SedUdpTransport::transmit_() {
   if(send_(2,tx_group_,tx_part_,parts,tx_.data()+tx_part_*CHUNK,size,tx_flags_,&tx_peer_,tx_peer_len_)) ++tx_part_;
   if(tx_part_==parts) {
     last_send_=millis(); ++attempts_;
-    ESP_LOGD(TAG,"UDP group=%u round=%u/%u sent; waiting ACK %u ms (port=%u)",
+    ESP_LOGD(TAG,"UDP group=%u round=%u/%u sent; waiting ACK %u ms (port=%u bytes=%u parts=%u)",
         static_cast<unsigned>(tx_group_),static_cast<unsigned>(attempts_),static_cast<unsigned>(tx_ack_resend_+1U),
-        static_cast<unsigned>(tx_ack_timeout_),ntohs(reinterpret_cast<const sockaddr_in6 *>(&tx_peer_)->sin6_port));
+        static_cast<unsigned>(tx_ack_timeout_),ntohs(reinterpret_cast<const sockaddr_in6 *>(&tx_peer_)->sin6_port),
+        static_cast<unsigned>(tx_.size()),static_cast<unsigned>(parts));
   }
 }
 void SedUdpTransport::request_schema(const sockaddr_storage *reply_peer,socklen_t reply_length) {
