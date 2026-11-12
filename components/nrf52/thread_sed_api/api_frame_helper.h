@@ -31,6 +31,12 @@ static constexpr uint16_t MAX_MESSAGE_SIZE = 8192;  // 8 KiB for ESP8266
 static constexpr uint16_t MAX_MESSAGE_SIZE = 32768;  // 32 KiB for ESP32 and other platforms
 #endif
 
+#ifdef USE_THREAD_SED_API_UDP
+// Account for the type/length record header in native batch sizes. In
+// particular, a valid empty protobuf must not return the zero/failure sentinel.
+static constexpr uint8_t UDP_PROTO_HEADER_SIZE = 4;
+#endif
+
 // Extra byte reserved in rx_buf_ beyond the message size so protobuf
 // StringRef fields can be null-terminated in-place after decode.
 static constexpr uint16_t RX_BUF_NULL_TERMINATOR = 1;
@@ -190,7 +196,7 @@ class APIFrameHelper {
   // added, this should become a virtual method.
   uint8_t frame_header_size(uint16_t payload_size, uint16_t message_type) const {
 #ifdef USE_THREAD_SED_API_UDP
-    return 0;
+    return UDP_PROTO_HEADER_SIZE;
 #elif defined(USE_THREAD_SED_API_NOISE) && defined(USE_THREAD_SED_API_PLAINTEXT)
     return this->frame_footer_size_
                ? this->frame_header_padding_

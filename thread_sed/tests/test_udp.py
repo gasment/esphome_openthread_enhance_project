@@ -101,6 +101,18 @@ class UdpTests(unittest.IsolatedAsyncioTestCase):
         ack=await self.receive()
         self.assertEqual((ack.kind,ack.group),(wire.ACK,group))
 
+    async def test_empty_list_done_is_required_for_onboarding_ack(self):
+        frames=wire.decode_frames(descriptors())
+        self.assertEqual(frames[-1],(TYPES[api_pb2.ListEntitiesDoneResponse],b''))
+        # Missing the zero-byte protobuf terminator is an incomplete snapshot,
+        # not a valid empty descriptor message. HA must not ACK it.
+        await self.transmit(wire.encode_frames(frames[:-1]),wire.DESCRIPTORS)
+        with self.assertRaises(asyncio.TimeoutError): await self.receive(.05)
+        self.assertIsNone(self.session.info)
+        # A complete group containing the empty record is accepted normally.
+        await self.establish()
+        self.assertEqual(len(self.session.entities),2)
+
     async def test_descriptor_state_and_no_handshake(self):
         await self.establish()
         self.assertEqual(self.session.info.name,'test-sed')

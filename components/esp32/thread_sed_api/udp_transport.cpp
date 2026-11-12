@@ -262,7 +262,11 @@ void SedUdpTransport::loop() {
 }
 APIError APIUDPFrameHelper::write_protobuf_packet(uint16_t type,ProtoWriteBuffer buffer) {
   const auto *data=buffer.get_buffer();
-  return owner_->udp_.append(type,data->data(),data->size())?APIError::OK:APIError::OUT_OF_MEMORY;
+  // Native encoding reserves the record header. append() writes the actual
+  // wire header, so skip that padding even when the protobuf body is empty.
+  if(data->size()<UDP_PROTO_HEADER_SIZE) return APIError::OUT_OF_MEMORY;
+  return owner_->udp_.append(type,data->data()+UDP_PROTO_HEADER_SIZE,data->size()-UDP_PROTO_HEADER_SIZE)
+      ?APIError::OK:APIError::OUT_OF_MEMORY;
 }
 APIError APIUDPFrameHelper::write_protobuf_messages(ProtoWriteBuffer buffer,std::span<const MessageInfo> messages) {
   const auto *data=buffer.get_buffer();

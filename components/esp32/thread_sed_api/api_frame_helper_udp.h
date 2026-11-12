@@ -5,7 +5,7 @@ namespace esphome::thread_sed_api {
 class APIServer;
 class APIUDPFrameHelper final : public APIFrameHelper {
  public:
-  explicit APIUDPFrameHelper(APIServer *owner) : owner_(owner) { frame_header_padding_=0; }
+  explicit APIUDPFrameHelper(APIServer *owner) : owner_(owner) { frame_header_padding_=UDP_PROTO_HEADER_SIZE; }
   APIError init() override { state_=State::DATA; return APIError::OK; }
   APIError loop() override { return APIError::OK; }
   APIError read_packet(ReadPacketBuffer *) override { return APIError::WOULD_BLOCK; }
