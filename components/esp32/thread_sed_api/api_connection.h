@@ -70,6 +70,10 @@ void bench_process_batch(APIConnection *conn);
 class APIConnection final : public APIServerConnectionBase {
  public:
   friend class APIServer;
+#ifdef USE_THREAD_SED_API_UDP
+  // UDP dispatches validated command frames through the native decoder.
+  friend class SedUdpTransport;
+#endif
   friend class ListEntitiesIterator;
 #ifdef USE_BENCHMARK
   friend void bench_enable_immediate_send(APIConnection *conn);
