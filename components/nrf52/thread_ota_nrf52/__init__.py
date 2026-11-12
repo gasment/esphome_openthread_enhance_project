@@ -42,7 +42,7 @@ async def to_code(config):
         "IMG_ERASE_PROGRESSIVELY", "BOOTLOADER_MCUBOOT",
         "MCUMGR_GRP_OS", "MCUMGR_GRP_OS_MCUMGR_PARAMS",
         "MCUMGR_TRANSPORT_UDP", "MCUMGR_TRANSPORT_UDP_IPV6",
-        "LOG", "LOG_OUTPUT", "LOG_MODE_DEFERRED", "LOG_PRINTK", "LOG_PROCESS_THREAD", "PRINTK",
+        "LOG", "LOG_OUTPUT", "LOG_PRINTK", "PRINTK",
     ):
         zephyr_add_prj_conf(key, True)
     zephyr_add_prj_conf("MCUMGR_TRANSPORT_UDP_IPV4", False)
@@ -50,10 +50,13 @@ async def to_code(config):
     zephyr_add_prj_conf("MCUMGR_TRANSPORT_UDP_MTU", 512)
     zephyr_add_prj_conf("MCUMGR_TRANSPORT_NETBUF_SIZE", 640)
     zephyr_add_prj_conf("MCUMGR_TRANSPORT_UDP_STACK_SIZE", 1024)
-    zephyr_add_prj_conf("LOG_BLOCK_IN_THREAD", False)
-    zephyr_add_prj_conf("LOG_PROCESS_TRIGGER_THRESHOLD", 1)
-    # The SWD component already bridges ESPHome messages into Zephyr printk.
+    # Let the RTT component own the complete logging profile, including its
+    # optional immediate fault diagnostics. OTA itself does not need deferred logs.
     if "swd_rtt_nrf52" not in CORE.loaded_integrations:
+        zephyr_add_prj_conf("LOG_MODE_DEFERRED", True)
+        zephyr_add_prj_conf("LOG_PROCESS_THREAD", True)
+        zephyr_add_prj_conf("LOG_BLOCK_IN_THREAD", False)
+        zephyr_add_prj_conf("LOG_PROCESS_TRIGGER_THRESHOLD", 1)
         logger.request_log_listener()
         log = await cg.get_variable(CORE.config["logger"][CONF_ID])
         cg.add(cg.RawStatement(f"thread_ota_nrf52::install_log_bridge({log});"))

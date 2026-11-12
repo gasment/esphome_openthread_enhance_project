@@ -116,3 +116,5 @@
 - `swd_rtt_nrf52.fault_diagnostics: true` 将 Zephyr 日志切换为立即输出，避免底层 fatal handler 直接软件复位时丢失排队的异常日志；默认 false 保持原延迟模式。
 - 该选项仅用于定位，增加调用现场的日志开销；定位后应删除或关闭。未修改故障处理器、看门狗或 API 握手协议。
 - 已在本地 light-bt-stair/main.yaml 临时启用。固件编译与上板由用户执行。
+
+- 修正 RTT 诊断与 Thread OTA 的日志模式冲突：加载 swd_rtt_nrf52 时由其统一设置日志处理模式，OTA 不再强制 deferred；独立 OTA 保持原模式。
