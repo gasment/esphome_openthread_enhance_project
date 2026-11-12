@@ -109,3 +109,10 @@
 - 修正正常客户端循环误置自动/手动批次断开标记的问题；现在仅移除连接时标记断开，避免正常会话被错误报告 disconnected。
 - 增加非阻塞 connect 返回、TCP 建连完成、helper 初始化三个阶段日志；保存 connect 的 errno 后再输出日志，避免日志调用改写 errno。
 - 上板 RESETREAS=0x6 包含 watchdog/software 位；因为当前诊断不清除累积位，仍需结合重启前阶段日志定位本次复位，未扩大或关闭看门狗。
+
+
+### RTT 致命异常诊断开关
+
+- `swd_rtt_nrf52.fault_diagnostics: true` 将 Zephyr 日志切换为立即输出，避免底层 fatal handler 直接软件复位时丢失排队的异常日志；默认 false 保持原延迟模式。
+- 该选项仅用于定位，增加调用现场的日志开销；定位后应删除或关闭。未修改故障处理器、看门狗或 API 握手协议。
+- 已在本地 light-bt-stair/main.yaml 临时启用。固件编译与上板由用户执行。
