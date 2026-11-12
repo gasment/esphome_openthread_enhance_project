@@ -2262,14 +2262,21 @@ void APIConnection::send_execute_service_response(uint32_t call_id, bool success
 void APIConnection::on_subscribe_homeassistant_services_request() {
   this->flags_.service_call_subscription = true;
   HomeassistantActionRequest call;
-  call.service = "thread_sed.session";
+  call.service = StringRef::from_lit("thread_sed.session");
   call.data.init(3);
-  HomeassistantServiceMap fingerprint; fingerprint.key = "schema"; fingerprint.value = THREAD_SED_SCHEMA;
+  HomeassistantServiceMap fingerprint;
+  fingerprint.key = StringRef::from_lit("schema");
+  fingerprint.value = StringRef::from_lit(THREAD_SED_SCHEMA);
   call.data.push_back(fingerprint);
-  HomeassistantServiceMap sleeping; sleeping.key = "sleep"; sleeping.value = this->parent_->sed_has_sleep() ? "1" : "0";
+  HomeassistantServiceMap sleeping;
+  sleeping.key = StringRef::from_lit("sleep");
+  sleeping.value = this->parent_->sed_has_sleep() ? StringRef::from_lit("1") : StringRef::from_lit("0");
   call.data.push_back(sleeping);
   const std::string duration = std::to_string(this->parent_->sed_sleep_seconds());
-  HomeassistantServiceMap seconds; seconds.key = "sleep_seconds"; seconds.value = duration;
+  HomeassistantServiceMap seconds;
+  seconds.key = StringRef::from_lit("sleep_seconds");
+  // The backing string remains alive through the synchronous message encode.
+  seconds.value = StringRef(duration);
   call.data.push_back(seconds);
   this->send_homeassistant_action(call);
 }

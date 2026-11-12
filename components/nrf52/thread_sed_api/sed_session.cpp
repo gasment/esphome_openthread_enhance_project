@@ -11,9 +11,13 @@ namespace sed_ot = esphome::openthread;
 #include <openthread/link.h>
 namespace esphome::thread_sed_api {
 bool APIServer::sed_send(const char *service, const std::string &value) {
-  HomeassistantActionRequest call; call.service = service;
+  HomeassistantActionRequest call;
+  call.service = StringRef(service);
   call.data.init(1);
-  HomeassistantServiceMap item; item.key = "token"; item.value = value;
+  HomeassistantServiceMap item;
+  item.key = StringRef::from_lit("token");
+  // send_homeassistant_action encodes synchronously; value outlives each send.
+  item.value = StringRef(value);
   call.data.push_back(item);
   bool sent = false;
   for (auto &client : this->active_clients()) {

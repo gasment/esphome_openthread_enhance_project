@@ -61,3 +61,10 @@
 - user_services.cpp 增加与头文件声明一致的 USER_DEFINED_ACTIONS 保护，避免在未开启自定义服务时引用 UserServiceStatic / ExecuteServiceArgument 等不存在的类型。
 - 此次修复不通过开启无用的用户服务功能来消除报错；已保留的实体上报、明文/加密与休眠确认行为不变。
 - 不运行固件编译；通过配置、内存内代码生成和实际源文件筛选检查验证，固件构建由用户执行。
+
+## 修复 StringRef 显式构造
+
+- 修复 sed_session.cpp 中 service/token/value 的赋值，使用 StringRef 显式构造。
+- 同步修复会话元数据消息中的 service、schema、sleep、sleep_seconds；字面量使用 from_lit，动态 std::string 使用显式 StringRef。
+- 核对消息同步编码路径，确保动态字符串在编码期间保持有效；未修改生成的 protobuf 字段类型或 ESPHome 核心 StringRef。
+- 两个平台同步修复；仅做静态及配置/代码生成验证，不运行固件编译。
