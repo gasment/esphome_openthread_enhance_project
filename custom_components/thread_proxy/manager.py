@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from homeassistant.components import zeroconf
 from zeroconf import ServiceStateChange, IPVersion
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+from .br_device import br_device_enabled
 from .connection import ProxyConnection
 from .const import DOMAIN, SERVICE_TYPE, DEFAULT_PORT
 from .models import BRState, Discovery, discovery_host
@@ -17,6 +18,10 @@ class Runtime:
     entry: object
     state: BRState
     data: dict
+    br_entities: list = field(default_factory=list)
+    br_entity_factories: dict = field(default_factory=dict)
+    br_device_enabled: bool = True
+    br_device_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     listeners: set = field(default_factory=set)
     connection: ProxyConnection | None = None
     task: asyncio.Task | None = None
@@ -87,7 +92,7 @@ class ProxyManager:
     async def add_entry(self, entry):
         state = BRState(entry.entry_id, entry.title, entry.data["host"], entry.data.get("port", DEFAULT_PORT),
                         proxy_id=entry.unique_id or entry.data.get("proxy_id", ""))
-        runtime = Runtime(entry, state, dict(entry.data))
+        runtime = Runtime(entry, state, dict(entry.data), br_device_enabled=br_device_enabled(entry))
         self.runtimes[entry.entry_id] = runtime
 
         def identify(identity):
@@ -123,6 +128,7 @@ class ProxyManager:
                                 entry.data.get("port", DEFAULT_PORT), proxy_id=entry.unique_id or "",
                                 status="disconnected", last_error="not_loaded")
                 bound.append(state.public())
+            bound[-1]["create_device"] = br_device_enabled(entry)
         identities = {entry.unique_id for entry in self.entries() if entry.unique_id}
         endpoints = {(entry.data.get("host"), entry.data.get("port", DEFAULT_PORT)) for entry in self.entries()}
         found = [item.public() for item in self.discovered.values()

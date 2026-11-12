@@ -7,7 +7,7 @@ from .const import DOMAIN, PANEL_PATH
 
 class ProxyView(HomeAssistantView):
     url = "/api/thread_proxy"
-    extra_urls = ["/api/thread_proxy/bind", "/api/thread_proxy/unbind", "/api/thread_proxy/reconnect"]
+    extra_urls = ["/api/thread_proxy/bind", "/api/thread_proxy/unbind", "/api/thread_proxy/reconnect", "/api/thread_proxy/create_device"]
     name = "api:thread_proxy"
     requires_auth = True
 
@@ -50,12 +50,21 @@ class ProxyView(HomeAssistantView):
                 return self.json({"ok": True})
             # Never return FlowResult schemas, config data or encryption keys.
             return self.json({"error": result.get("reason") or result.get("errors", {}).get("base", "invalid_input")}, status_code=409)
-        if action not in ("unbind", "reconnect"):
+        if action not in ("unbind", "reconnect", "create_device"):
             return self.json({"error": "invalid_action"}, status_code=400)
         entry_id = data.get("entry_id")
         entry = self.hass.config_entries.async_get_entry(entry_id) if isinstance(entry_id, str) else None
         if entry is None or entry.domain != DOMAIN:
             return self.json({"error": "unknown_binding"}, status_code=404)
+        if action == "create_device":
+            from .br_device import async_set_br_device, BrDeviceError
+            if type(data.get("enabled")) is not bool:
+                return self.json({"error": "invalid_input"}, status_code=400)
+            try:
+                await async_set_br_device(self.hass, entry, data["enabled"], persist=True)
+            except BrDeviceError as err:
+                return self.json({"error": str(err)}, status_code=409)
+            return self.json({"ok": True})
         if action == "unbind":
             result = await self.hass.config_entries.async_remove(entry_id)
             ok = result.get("require_restart") is not True if isinstance(result, dict) else bool(result)
@@ -69,9 +78,10 @@ async def async_setup_frontend(hass, manager):
     await hass.http.async_register_static_paths([
         StaticPathConfig("/thread_proxy_static", str(Path(__file__).parent / "frontend"), cache_headers=False)])
     hass.http.register_view(ProxyView(hass, manager))
+    from homeassistant.components.frontend import add_extra_js_url
+    add_extra_js_url(hass, "/thread_proxy_static/integration-entry.js?v=0.5.3")
     await panel_custom.async_register_panel(
         hass, frontend_url_path=PANEL_PATH, webcomponent_name="thread-proxy-panel",
-        sidebar_title="Thread Proxy", sidebar_icon="mdi:router-network",
-        module_url="/thread_proxy_static/panel.js?v=0.5.0", require_admin=True,
-        config_panel_domain=DOMAIN)
+        sidebar_title=None, sidebar_icon="mdi:router-network",
+        module_url="/thread_proxy_static/panel.js?v=0.5.3", require_admin=True)
     manager.panel_registered = True

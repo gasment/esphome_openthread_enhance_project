@@ -2,6 +2,7 @@
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from .const import DOMAIN, PLATFORMS
 from .manager import get_manager
+from .br_device import async_set_br_device, br_device_enabled
 
 async def async_setup(hass, config):
     from .frontend import async_setup_frontend
@@ -18,6 +19,8 @@ async def async_setup_entry(hass, entry):
     await manager.add_entry(entry)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if not br_device_enabled(entry):
+            await async_set_br_device(hass, entry)
     except BaseException:
         await manager.remove_entry(entry.entry_id)
         raise
@@ -29,6 +32,8 @@ async def _updated(hass, entry):
     # Assigning a verified unique_id must not tear down a healthy connection.
     if runtime is not None and (runtime.data != dict(entry.data) or runtime.state.name != entry.title):
         await hass.config_entries.async_reload(entry.entry_id)
+    elif runtime is not None:
+        await async_set_br_device(hass, entry)
 
 async def async_unload_entry(hass, entry):
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):

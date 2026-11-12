@@ -2,9 +2,10 @@
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from .const import STATES
 from .entity import ProxyEntity
+from .br_device import register_br_entities
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([BRStatus(entry.runtime_data)])
+    register_br_entities(entry.runtime_data, "sensor", lambda runtime: [BRStatus(runtime)], async_add_entities)
 
 class BRStatus(ProxyEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM

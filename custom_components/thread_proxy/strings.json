@@ -42,6 +42,9 @@
       "already_configured": "This BR is already bound.",
       "invalid_discovery": "Invalid proxy announcement.",
       "unsupported_protocol": "Unsupported proxy protocol version."
+    },
+    "initiate_flow": {
+      "user": "Manage BR access"
     }
   },
   "entity": {

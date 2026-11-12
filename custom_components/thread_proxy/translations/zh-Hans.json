@@ -42,6 +42,9 @@
       "already_configured": "这个 BR 已绑定。",
       "invalid_discovery": "无效的代理公告。",
       "unsupported_protocol": "不支持此代理协议版本。"
+    },
+    "initiate_flow": {
+      "user": "BR 接入管理"
     }
   },
   "entity": {
