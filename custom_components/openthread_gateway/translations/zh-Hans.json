@@ -1,0 +1,81 @@
+{
+  "title": "OpenThread Gateway",
+  "config": {
+    "step": {
+      "user": {
+        "title": "设置 Thread 业务后端",
+        "description": "后端 ID 为稳定绑定身份，与 BR 无关。需要 LAN IPv6 和 v3 transporter。",
+        "data": {
+          "name": "名称",
+          "backend_id": "后端 ID",
+          "port": "UDP 监听端口",
+          "advertise_address": "公告的 IPv6 地址（留空自动选择）"
+        }
+      },
+      "reconfigure": {
+        "title": "网络设置",
+        "data": {
+          "name": "名称",
+          "port": "UDP 监听端口",
+          "advertise_address": "公告的 IPv6 地址（留空自动选择）"
+        }
+      }
+    },
+    "error": {
+      "invalid_settings": "检查后端 ID 和可路由 IPv6 地址。"
+    },
+    "abort": {
+      "already_configured": "该后端已配置。",
+      "reconfigure_successful": "网络设置已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "admit": "接入新发现节点",
+          "remove": "解绑并移除节点",
+          "entities": "选择公开实体"
+        }
+      },
+      "admit": {
+        "title": "接入节点",
+        "description": "睡眠节点将在下次上线时完成绑定。",
+        "data": {
+          "device": "节点"
+        }
+      },
+      "remove": {
+        "title": "选择要解绑的节点",
+        "data": {
+          "device": "节点"
+        }
+      },
+      "confirm_remove": {
+        "title": "确认解绑",
+        "description": "移除 {device} 的绑定和实体，离线节点将在下次通信时获知解绑。"
+      },
+      "entities": {
+        "title": "选择节点",
+        "data": {
+          "device": "节点"
+        }
+      },
+      "select_entities": {
+        "title": "公开实体",
+        "data": {
+          "all_entities": "公开所有当前和未来实体",
+          "entities": "实体"
+        }
+      }
+    },
+    "error": {
+      "node_changed": "节点状态已变化，请重新选择。"
+    },
+    "abort": {
+      "no_candidates": "暂无新发现节点。请让未绑定节点上线后重试。",
+      "no_nodes": "没有可管理的节点或完整实体清单。",
+      "node_changed": "节点状态已变化，或撤销记录容量已满。"
+    }
+  }
+}

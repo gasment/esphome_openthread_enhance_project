@@ -1,0 +1,19 @@
+{
+  "domain": "openthread_gateway",
+  "name": "OpenThread Gateway",
+  "codeowners": [
+    "@gasment"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "network",
+    "zeroconf"
+  ],
+  "documentation": "https://github.com/gasment/esphome_openthread_enhance_project/tree/dev/openthread_gateway",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/gasment/esphome_openthread_enhance_project/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

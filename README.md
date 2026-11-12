@@ -66,3 +66,9 @@ features:
 
 ## 使用指导
 参阅文档：https://esphome-openthread-enhance-pj.netlify.app/
+
+## HA 业务网关集成
+
+独立的 [OpenThread Gateway HA 集成](openthread_gateway/README.md)，提供 v3 IPv6 UDP 后端、人工接入及动态实体管理。当前为 HA 端第一版；四类 transporter 尚需适配新协议。
+
+集成运行文件位于 `custom_components/openthread_gateway`，本仓库根目录提供 `hacs.json`，可按 Integration 类型添加到 HACS / Marketplace。安装后重启 HA，再添加 OpenThread Gateway 集成。详见 [安装说明](openthread_gateway/README.md)和[发布说明](openthread_gateway/PUBLISHING.md)。
