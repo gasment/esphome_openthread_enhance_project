@@ -339,7 +339,7 @@ class ThreadSedTransporter : public Component {
   std::atomic<uint32_t> drops_{0};
   std::string node_, name_, session_, expected_gateway_;
   uint32_t sequence_{0};
-  uint32_t discovery_timeout_{1000}, timeout_ms_{5000}, heartbeat_ms_{10000};
+  uint32_t discovery_timeout_{8000}, timeout_ms_{30000}, heartbeat_ms_{10000};
   uint32_t started_{0}, query_at_{0}, manifest_at_{0}, heartbeat_at_{0};
   uint32_t last_gateway_reply_{0}, discovery_started_{0};
   bool discovery_active_{false};

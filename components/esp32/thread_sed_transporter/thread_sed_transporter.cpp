@@ -198,7 +198,8 @@ bool ThreadSedTransporter::ensure_target_() {
   const uint32_t now = millis();
   if (dns_pending_ == 0 && (!dns_at_ || uint32_t(now - dns_at_) >= 10000) &&
       (!binding_.data.owner[0] || !target_valid_())) start_dns_();
-  if (querying_ && uint32_t(now - query_at_) < discovery_timeout_) return false;
+  // HELLO retry interval is independent of the slower DNS-SD proxy window.
+  if (querying_ && uint32_t(now - query_at_) < 1000) return false;
   query_at_ = now; querying_ = true;
   auto *j = envelope_("hello");
   cJSON_DeleteItemFromObjectCaseSensitive(j, "ctx");
@@ -871,14 +872,21 @@ void ThreadSedTransporter::start_dns_() {
   auto *query = new (std::nothrow) DnsQuery{this, dns_epoch_};
   if (!query) return;
   ++dns_pending_; dns_at_ = millis();
-  ESP_LOGD(TAG, "Browsing HA backends through Thread DNS-SD proxy");
-  if (otDnsClientBrowse(instance, thread_ha::SERVICE, dns_browse_, query, &config) != OT_ERROR_NONE) { --dns_pending_; delete query; }
+  char address[64]; otIp6AddressToString(&server->mAddress, address, sizeof(address));
+  ESP_LOGD(TAG, "DNS-SD browse: server=[%s]:53 timeout=%ums service=%s", address, unsigned(discovery_timeout_), thread_ha::SERVICE);
+  const auto error = otDnsClientBrowse(instance, thread_ha::SERVICE, dns_browse_, query, &config);
+  if (error != OT_ERROR_NONE) {
+    ESP_LOGW(TAG, "DNS-SD browse could not start: %s (%d)", otThreadErrorToString(error), int(error));
+    --dns_pending_; delete query;
+  }
 }
 void ThreadSedTransporter::dns_browse_(otError error, const otDnsBrowseResponse *response, void *context) {
   auto *query = static_cast<DnsQuery *>(context); auto *self = query->owner;
+  unsigned found = 0;
   if (error == OT_ERROR_NONE && !self->shutdown_) {
     char label[64];
     for (unsigned i = 0; i < 8 && otDnsBrowseResponseGetServiceInstance(response, i, label, sizeof(label)) == OT_ERROR_NONE; ++i) {
+      ++found;
       auto *json = cJSON_CreateObject(); cJSON_AddStringToObject(json, "instance", label);
       cJSON_AddNumberToObject(json, "epoch", query->epoch);
       auto wire = encode(json); cJSON_Delete(json);
@@ -886,14 +894,17 @@ void ThreadSedTransporter::dns_browse_(otError error, const otDnsBrowseResponse 
       if (packet) { packet->internal = true; packet->size = wire.size(); std::memcpy(packet->data, wire.c_str(), wire.size() + 1); self->queue_packet_(packet); }
     }
   }
-  if (error != OT_ERROR_NONE) ESP_LOGD(TAG, "HA DNS-SD query failed: %d", int(error));
+  if (error != OT_ERROR_NONE) ESP_LOGD(TAG, "DNS-SD browse failed: %s (%d)", otThreadErrorToString(error), int(error));
+  else ESP_LOGD(TAG, "DNS-SD browse completed: %u instance(s)", found);
   --self->dns_pending_; delete query; esphome::wake_loop_threadsafe();
 }
 void ThreadSedTransporter::dns_service_(otError error, const otDnsServiceResponse *response, void *context) {
   auto *query = static_cast<DnsQuery *>(context); auto *self = query->owner;
   uint8_t txt[256]; char host[256]; otDnsServiceInfo info{};
   info.mTxtData = txt; info.mTxtDataSize = sizeof(txt); info.mHostNameBuffer = host; info.mHostNameBufferSize = sizeof(host);
-  if (!self->shutdown_ && error == OT_ERROR_NONE && otDnsServiceResponseGetServiceInfo(response, &info) == OT_ERROR_NONE &&
+  const auto parsed = !self->shutdown_ && error == OT_ERROR_NONE ? otDnsServiceResponseGetServiceInfo(response, &info) : error;
+  bool accepted = false;
+  if (!self->shutdown_ && parsed == OT_ERROR_NONE &&
       !info.mTxtDataTruncated && info.mPort && !otIp6IsAddressUnspecified(&info.mHostAddress) &&
       // Public OpenThread C API in Nordic SDK 2.9.2 has no link-local/multicast predicates.
       !(info.mHostAddress.mFields.m8[0] == 0xfe && (info.mHostAddress.mFields.m8[1] & 0xc0) == 0x80) &&
@@ -907,6 +918,7 @@ void ThreadSedTransporter::dns_service_(otError error, const otDnsServiceRespons
       if (!std::strcmp(entry.mKey, "v")) version.assign(reinterpret_cast<const char *>(entry.mValue), entry.mValueLength);
     }
     if (thread_ha::identifier(id) && version == "3" && info.mTtl && info.mHostAddressTtl) {
+      accepted = true;
       auto *json = cJSON_CreateObject(); cJSON_AddStringToObject(json, "backend", id.c_str());
       cJSON_AddNumberToObject(json, "ttl", std::min(info.mTtl, info.mHostAddressTtl));
       cJSON_AddNumberToObject(json, "epoch", query->epoch);
@@ -916,7 +928,8 @@ void ThreadSedTransporter::dns_service_(otError error, const otDnsServiceRespons
         packet->size = wire.size(); std::memcpy(packet->data, wire.c_str(), wire.size() + 1); self->queue_packet_(packet); }
     }
   }
-  if (error != OT_ERROR_NONE) ESP_LOGD(TAG, "HA DNS-SD query failed: %d", int(error));
+  if (parsed != OT_ERROR_NONE) ESP_LOGD(TAG, "DNS-SD resolve failed: %s (%d)", otThreadErrorToString(parsed), int(parsed));
+  else if (!accepted && !self->shutdown_) ESP_LOGD(TAG, "DNS-SD service ignored: require TXT v=3/id, SRV port and usable AAAA/TTL");
   --self->dns_pending_; delete query; esphome::wake_loop_threadsafe();
 }
 void ThreadSedTransporter::process_dns_(const Packet &packet) {
@@ -932,7 +945,11 @@ void ThreadSedTransporter::process_dns_(const Packet &packet) {
         config.mResponseTimeout = discovery_timeout_; config.mMaxTxAttempts = 1;
         auto *query = new (std::nothrow) DnsQuery{this, dns_epoch_};
         if (query) { ++dns_pending_;
-          if (otDnsClientResolveServiceAndHostAddress(instance, label.c_str(), thread_ha::SERVICE, dns_service_, query, &config) != OT_ERROR_NONE) {
+          char address[64]; otIp6AddressToString(&server->mAddress, address, sizeof(address));
+          ESP_LOGD(TAG, "DNS-SD resolve: instance=%s server=[%s]:53 timeout=%ums", label.c_str(), address, unsigned(discovery_timeout_));
+          const auto error = otDnsClientResolveServiceAndHostAddress(instance, label.c_str(), thread_ha::SERVICE, dns_service_, query, &config);
+          if (error != OT_ERROR_NONE) {
+            ESP_LOGW(TAG, "DNS-SD resolve could not start: %s (%d)", otThreadErrorToString(error), int(error));
             --dns_pending_; delete query;
           }
         }
@@ -944,7 +961,8 @@ void ThreadSedTransporter::process_dns_(const Packet &packet) {
       return now_ms_() >= e.expires || (e.id == id && e.port == packet.port && std::memcmp(&e.address, &packet.peer, sizeof(packet.peer)) == 0);
     }), endpoints_.end());
     if (endpoints_.size() < 8) endpoints_.push_back({id, packet.peer, packet.port, now_ms_() + uint64_t(item(json, "ttl")->valuedouble) * 1000});
-    ESP_LOGD(TAG, "Discovered HA backend: %s, UDP %u", id.c_str(), unsigned(packet.port));
+    char address[64]; otIp6AddressToString(&packet.peer, address, sizeof(address));
+    ESP_LOGD(TAG, "Discovered HA backend: %s at [%s]:%u", id.c_str(), address, unsigned(packet.port));
     querying_ = false;
   }
   cJSON_Delete(json);

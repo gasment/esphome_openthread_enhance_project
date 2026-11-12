@@ -19,7 +19,7 @@
 +  # backend 整段可省略；留空时让所有已发现 HA 显示候选，人工选一个接入。
 +  backend:
 +    id: ha_main  # HA 集成中配置的后端 ID，不能填写旧 BR gateway_id
-+    # discovery_timeout: 2s
++    # discovery_timeout: 8s
    deep_sleep_id: sleep_control  # 保留，自动读取本次实际睡眠时长
    control_ready: !lambda return id(keep_awake).state;
    heartbeat_interval: 10s
@@ -54,3 +54,9 @@ ESP32 没有 deep_sleep_id，可设置 `sleep_for: 30min`，供 shutdown 公告�
 3. 测试传感器/事件、重复 ACK、控制、睡眠唤醒、HA 重启、解绑后重新接入，最后测试同网多 BR 切换。
 
 已验证：ESP32/nRF52 最小 YAML 的 esphome config、Python schema 解析、C++ tree-sitter 语法与实际 SDK API/Kconfig 核对。未运行编译、刷机或无线联调；C++ 语义/链接和实际线程时序仍需用户编译与上板确认。跨 HA 重启丢失事件去重记录时不承诺恰好一次。
+
+## DNS-SD 超时修正
+
+节点默认 `backend.discovery_timeout: 8s`、`timeout: 30s`；HELLO 重试保持独立的 1 秒间隔。旧版 2 秒 DNS 等待短于 ESP-IDF 5.5.6 BR 的 3 秒 mDNS 查询窗口，可能持续报 `ResponseTimeout (28)`，5 秒就绪预算也无法覆盖多步发现与解析。若 YAML 显式配置短等待，需要一并修改；正常保留会话的 System ON 唤醒不重复完整发现。
+
+DNS browse/resolve 超时属于服务发现阶段，不足以证明 HA 业务端口不通，也不能证明公告地址有误。先看新日志中的 DNS 服务器、实例数量与解析结果，再核对 HA 宿主机上是否确有公告 IPv6、LAN mDNS 是否能被 BR 收到。

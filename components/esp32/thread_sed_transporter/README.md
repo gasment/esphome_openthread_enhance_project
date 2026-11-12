@@ -13,7 +13,8 @@ thread_sed_transporter:
   # backend 可整体省略：向发现的 HA 后端发送候选 HELLO，仍需在 HA 人工接入。
   backend:
     id: ha_main  # 可选，限制目标 HA 后端 ID；指定后也不绕过人工确认
-    # discovery_timeout: 2s
+    # discovery_timeout: 8s  # BR 代理有约 3 秒 mDNS 查询窗口
+  # timeout: 30s  # 等待发现、解析、握手和清单的预算
   sleep_for: 30min  # 可选，给 HA 的预计休眠时长；应与实际睡眠周期一致
   control_ready: !lambda return id(keep_awake).state;
   heartbeat_interval: 10s
@@ -69,3 +70,5 @@ nRF52 使用 deep_sleep_id 在睡前发送 sleeping/sleep_for_s 公告，读取�
 重传在同一上下文内幂等。HA 重启/切换上下文后，未确认报告保留冻结值并重新编号；HA 若在事件已执行后、ACK 丢失且事件去重状态丢失时重启，无法保证跨故障“恰好一次”。
 
 验证范围：两个平台最小配置通过 ESPHome 2026.10.2 的 config 验证；C++ 仅语法解析与 API 核对，未编译固件、未上板联调。详见 [SED 迁移说明](../../../openthread_gateway/SED_MIGRATION.md)。
+
+发现超时排查：错误码 28 表示 DNS 响应超时，还没有进入 HA 绑定。默认单次查询等待 8 秒、整轮任务就绪预算 30 秒；若旧 YAML 显式设置更短值，需要同步修改。ESP-IDF 5.5.6 的 BR mDNS 查询窗口为 3 秒，2 秒的节点超时会过早丢弃正常结果。日志会区分 browse/resolve，并打印 DNS 服务器、查询等待时间和最终 HA 端点。HA 公告 IPv6 必须属于 HA 宿主机，不应填写 BR 地址；Docker host 不会绕过 LAN 的 mDNS/VLAN/防火墙限制。

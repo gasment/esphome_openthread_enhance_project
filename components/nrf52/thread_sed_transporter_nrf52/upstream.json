@@ -4,11 +4,11 @@
   "esphome_baseline": "2026.9.1",
   "runtime_dependency_on_original": false,
   "sha256": {
-    "__init__.py": "ed8efe8f9cf920bf6ad342ac1fedc92f1e77ef343d831d822cce4bdaa4856cca",
+    "__init__.py": "f28ff77f058340842dfaf172831a7453cd5ec9bf5b95652f6743d4d7e73850dc",
     "automation.h": "09becef5959f7b34d26c4972d5b9b20295c53b1bce4f784ec899091b128b7ef2",
     "delta.h": "69eb7554ff6715da469cea6e31c12becc7bc5051fef9d5b787171b2a85426bfa",
-    "thread_sed_transporter_nrf52.cpp": "034e71fe75ce59bb243d9f24d5f609d60c82ec780d5baeaf91267acda05cb8e1",
-    "thread_sed_transporter_nrf52.h": "e8567c92da4d2d8f7df1014e7caf3078d3252c4d4ff788d23e85d683ee48313d"
+    "thread_sed_transporter_nrf52.cpp": "255188423e98e1c610a8ed07ddc5b8600832cf371e73c10144bd46919cb41567",
+    "thread_sed_transporter_nrf52.h": "bf6949df3d62b5595a58d97fb5c217dc2ef3ef9e5db773dc91b88ec333f4a130"
   },
   "report_semantics": "Frozen event-driven sends; all baselines commit only on HA report ACK; System ON sleep retains session; raw manifest SHA-256",
   "protocol": "OpenThread Gateway v3"
