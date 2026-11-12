@@ -100,6 +100,7 @@ bool APIServer::sed_sleep_guard() {
 }
 void APIServer::sed_wake() {
   this->sed_sleep_pending_ = false; this->sed_sleep_ack_ = false; this->sed_sleep_finishing_ = false;
+  this->sed_poll(true);
 #ifdef USE_THREAD_SED_API_UDP
   this->udp_.wake();
 #else
@@ -119,16 +120,23 @@ void APIServer::sed_poll(bool fast) {
   auto lock = sed_ot::InstanceLock::try_acquire(0);
   if (!lock) return;
   auto *instance = lock.get_instance();
-  if (instance == nullptr || otThreadGetLinkMode(instance).mRxOnWhenIdle) return;
-  if (fast == this->sed_fast_poll_) return;
+  if (instance == nullptr) return;
+  if (otThreadGetLinkMode(instance).mRxOnWhenIdle) { this->sed_fast_poll_=false; return; }
+  const uint32_t current=otLinkGetPollPeriod(instance);
   if (fast) {
-    this->sed_saved_poll_ = otLinkGetPollPeriod(instance);
-    // Only shorten polling, never turn SED into MED.
-    uint32_t interval = this->sed_saved_poll_;
-    if (interval == 0 || interval > THREAD_SED_FAST_POLL_MS) interval = THREAD_SED_FAST_POLL_MS;
-    if (otLinkSetPollPeriod(instance, interval) != OT_ERROR_NONE) return;
-  } else if (otLinkSetPollPeriod(instance, this->sed_saved_poll_) != OT_ERROR_NONE) return;
-  this->sed_fast_poll_ = fast;
+    if (!this->sed_fast_poll_) this->sed_saved_poll_=current;
+    uint32_t interval=this->sed_saved_poll_;
+    if (interval==0 || interval>THREAD_SED_FAST_POLL_MS) interval=THREAD_SED_FAST_POLL_MS;
+    if (current!=interval) {
+      if (otLinkSetPollPeriod(instance,interval)!=OT_ERROR_NONE) return;
+      ESP_LOGD("thread_sed_api","Fast poll: %u -> %u ms",static_cast<unsigned>(current),static_cast<unsigned>(interval));
+    }
+  } else {
+    if (!this->sed_fast_poll_) return;
+    if (otLinkSetPollPeriod(instance,this->sed_saved_poll_)!=OT_ERROR_NONE) return;
+    ESP_LOGD("thread_sed_api","Restore poll: %u ms",static_cast<unsigned>(this->sed_saved_poll_));
+  }
+  this->sed_fast_poll_=fast;
 }
 void APIServer::sed_queue_event(EntityBase *entity, StringRef type) {
   if (this->sed_boot_ == 0) this->sed_boot_ = random_uint32();

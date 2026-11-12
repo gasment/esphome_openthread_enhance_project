@@ -223,6 +223,29 @@ class UdpTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(info.name,'test-sed')
 
+    async def test_onboarding_port_is_distinct_from_business_probe_port(self):
+        key=self.session.udp_key
+        port=self.node.getsockname()[1]
+        self.session.entry.data.update(host='::1',port=port)
+        await self.listener.probe(self.session)
+        data,business_peer=await asyncio.get_running_loop().sock_recvfrom(self.node,2048)
+        self.assertEqual(wire.decode(data,key).kind,wire.PROBE)
+        self.assertEqual(business_peer[1],self.address[1])
+        async def respond():
+            data,temporary_peer=await asyncio.get_running_loop().sock_recvfrom(self.node,2048)
+            self.assertEqual(wire.decode(data,key).kind,wire.PROBE)
+            self.assertNotEqual(temporary_peer[1],business_peer[1])
+            group,packets=self.encoder.encode(wire.DATA,descriptors(),schema=SCHEMA,flags=wire.DESCRIPTORS)
+            for packet in packets: await asyncio.get_running_loop().sock_sendto(self.node,packet,temporary_peer)
+            data,ack_peer=await asyncio.get_running_loop().sock_recvfrom(self.node,2048)
+            self.assertEqual(ack_peer,temporary_peer)
+            ack=wire.decode(data,key)
+            self.assertEqual((ack.kind,ack.group),(wire.ACK,group))
+        task=asyncio.create_task(respond())
+        info=await udp_listener.probe_device('::1',port,key,MAC)
+        await task
+        self.assertEqual(info.name,'test-sed')
+
     async def test_repeated_onboarding_same_address_port_and_identity(self):
         key=self.session.udp_key
         port=self.node.getsockname()[1]

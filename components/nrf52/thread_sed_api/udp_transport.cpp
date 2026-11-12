@@ -48,7 +48,7 @@ void SedUdpTransport::setup(uint16_t port) {
   preference_=global_preferences->make_preference<SavedPeer>(0x54534432UL,true);
   if(preference_.load(&saved_) && saved_.port!=0) {
     auto *peer=reinterpret_cast<sockaddr_in6 *>(&peer_);
-    peer->sin6_family=AF_INET6; peer->sin6_port=saved_.port; peer->sin6_scope_id=saved_.scope;
+    peer->sin6_family=AF_INET6; peer->sin6_port=htons(HA_PORT); peer->sin6_scope_id=saved_.scope;
     memcpy(&peer->sin6_addr,saved_.address,16); peer_len_=sizeof(*peer);
   }
   auto *client=owner_->add_client_(nullptr);
@@ -80,7 +80,10 @@ void SedUdpTransport::reset_delivery_(const char *reason) {
 }
 void SedUdpTransport::bind_peer_(const sockaddr_storage &peer,socklen_t length) {
   peer_=peer; peer_len_=length;
-  const auto *ip=reinterpret_cast<const sockaddr_in6 *>(&peer);
+  auto *ip=reinterpret_cast<sockaddr_in6 *>(&peer_);
+  // HA's business listener is fixed at 6064. probe_device() uses a temporary
+  // source port which must never be persisted as the business destination.
+  ip->sin6_port=htons(HA_PORT);
   SavedPeer saved{};
   memcpy(saved.address,&ip->sin6_addr,16); saved.port=ip->sin6_port; saved.scope=ip->sin6_scope_id;
   if(memcmp(&saved,&saved_,sizeof(saved))!=0) {
@@ -104,6 +107,8 @@ bool SedUdpTransport::flush(const std::string &control, uint32_t ack_timeout, ui
   tx_ack_timeout_=ack_timeout; tx_ack_resend_=ack_resend;
   tx_control_=control; tx_group_=++group_; attempts_=0; tx_part_=0;
   tx_flags_=schema_building_?2:0;
+  tx_peer_=(tx_flags_&2)?schema_peer_:peer_;
+  tx_peer_len_=(tx_flags_&2)?schema_peer_len_:peer_len_;
   if(tx_flags_&2) ESP_LOGI(TAG,"Sending descriptors: group=%u bytes=%u fragments=%u",
       static_cast<unsigned>(tx_group_),static_cast<unsigned>(tx_.size()),
       static_cast<unsigned>((tx_.size()+CHUNK-1)/CHUNK));
@@ -111,7 +116,8 @@ bool SedUdpTransport::flush(const std::string &control, uint32_t ack_timeout, ui
   return true;
 }
 bool SedUdpTransport::send_(uint8_t kind,uint32_t group,uint16_t part,uint16_t parts,
-                            const uint8_t *data,size_t size,uint8_t flags) {
+                            const uint8_t *data,size_t size,uint8_t flags,
+                            const sockaddr_storage *destination,socklen_t destination_length) {
   if(!ready() || size>CHUNK) return false;
   std::vector<uint8_t> packet(HEADER+size+16);
   memcpy(packet.data(),"TSD2",4); packet[4]=kind; packet[5]=flags;
@@ -134,7 +140,9 @@ bool SedUdpTransport::send_(uint8_t kind,uint32_t group,uint16_t part,uint16_t p
 #else
   if(size) memcpy(packet.data()+HEADER,data,size);
 #endif
-  return socket_->sendto(packet.data(),HEADER+size,0,reinterpret_cast<sockaddr *>(&peer_),peer_len_)==static_cast<ssize_t>(HEADER+size);
+  const auto *target=destination?destination:&peer_;
+  const auto target_len=destination?destination_length:peer_len_;
+  return socket_->sendto(packet.data(),HEADER+size,0,reinterpret_cast<const sockaddr *>(target),target_len)==static_cast<ssize_t>(HEADER+size);
 }
 void SedUdpTransport::transmit_() {
   if(tx_.empty()) return;
@@ -143,10 +151,19 @@ void SedUdpTransport::transmit_() {
   const auto size=std::min(CHUNK,tx_.size()-tx_part_*CHUNK);
   // One datagram per loop, with backpressure. A large schema must not keep
   // resending its first fragment while starving the later ones on EAGAIN.
-  if(send_(2,tx_group_,tx_part_,parts,tx_.data()+tx_part_*CHUNK,size,tx_flags_)) ++tx_part_;
-  if(tx_part_==parts) { last_send_=millis(); ++attempts_; }
+  if(send_(2,tx_group_,tx_part_,parts,tx_.data()+tx_part_*CHUNK,size,tx_flags_,&tx_peer_,tx_peer_len_)) ++tx_part_;
+  if(tx_part_==parts) {
+    last_send_=millis(); ++attempts_;
+    ESP_LOGD(TAG,"UDP group=%u round=%u/%u sent; waiting ACK %u ms (port=%u)",
+        static_cast<unsigned>(tx_group_),static_cast<unsigned>(attempts_),static_cast<unsigned>(tx_ack_resend_+1U),
+        static_cast<unsigned>(tx_ack_timeout_),ntohs(reinterpret_cast<const sockaddr_in6 *>(&tx_peer_)->sin6_port));
+  }
 }
-void SedUdpTransport::request_schema() { schema_requested_=true; }
+void SedUdpTransport::request_schema(const sockaddr_storage *reply_peer,socklen_t reply_length) {
+  requested_schema_peer_=reply_peer?*reply_peer:peer_;
+  requested_schema_peer_len_=reply_peer?reply_length:peer_len_;
+  schema_requested_=true;
+}
 void SedUdpTransport::cancel() {
   staging_.clear(); tx_.clear(); tx_control_.clear(); paused_tx_.clear(); paused_control_.clear();
   schema_building_=false; schema_requested_=false;
@@ -188,7 +205,8 @@ void SedUdpTransport::receive_() {
     if(kind==1) {
       char source[socket::SOCKADDR_STR_LEN];
       socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,source);
-      ESP_LOGI(TAG,"UDP probe received from %s (encrypted=%s)",source,(flags&1)?"YES":"NO");
+      ESP_LOGI(TAG,"UDP probe received from [%s]:%u (encrypted=%s)",source,
+          ntohs(reinterpret_cast<const sockaddr_in6 *>(&from)->sin6_port),(flags&1)?"YES":"NO");
     }
     const bool wildcard=std::all_of(p+6,p+12,[](uint8_t n){return n==0;});
     if(memcmp(p+6,mac_.data(),6)!=0 && !(kind==1 && wildcard)) {
@@ -220,21 +238,24 @@ void SedUdpTransport::receive_() {
     if(kind==1) {
       const bool was_ready=ready();
       bind_peer_(from,length);
-      if(memcmp(p+32,schema_.data(),16)!=0) request_schema();
+      if(memcmp(p+32,schema_.data(),16)!=0) request_schema(&from,length);
       else {
-        send_(7,++group_,0,1,nullptr,0);
+        send_(7,++group_,0,1,nullptr,0,0,&from,length);
         if(!was_ready && !owner_->sed_manual_send()) owner_->clients_[0]->on_subscribe_states_request();
       }
       continue;
     }
-    // Control/data ACKs must come from the selected HA endpoint.
-    const auto *expected=reinterpret_cast<const sockaddr_in6 *>(&peer_);
+    // Match ACKs to the frozen recipient of this group, not the most recent
+    // PROBE source. Commands/schema requests use the stable business endpoint.
+    const auto *expected=reinterpret_cast<const sockaddr_in6 *>((kind==3 && !tx_.empty())?&tx_peer_:&peer_);
     const auto *sender=reinterpret_cast<const sockaddr_in6 *>(&from);
     if(!ready() || sender->sin6_port!=expected->sin6_port ||
         memcmp(&sender->sin6_addr,&expected->sin6_addr,16)!=0) continue;
     const uint32_t group=get32(p+24);
     if(kind==4) { request_schema(); continue; }
     if(kind==3 && !tx_.empty() && group==tx_group_ && size==8 && memcmp(p+HEADER,boot_.data(),8)==0) {
+      ESP_LOGD(TAG,"UDP group=%u ACK after %u round(s), %u ms since last round",static_cast<unsigned>(group),
+          static_cast<unsigned>(attempts_),static_cast<unsigned>(millis()-last_send_));
       const auto control=tx_control_; const bool schema=(tx_flags_&2)!=0;
       tx_.clear(); tx_control_.clear();
       if(schema) {
@@ -243,6 +264,7 @@ void SedUdpTransport::receive_() {
         if(!paused_tx_.empty()) {
           tx_=std::move(paused_tx_); paused_tx_.clear(); tx_group_=paused_group_;
           tx_control_=std::move(paused_control_); paused_control_.clear();
+          tx_peer_=paused_peer_; tx_peer_len_=paused_peer_len_;
           tx_ack_timeout_=paused_ack_timeout_; tx_ack_resend_=paused_ack_resend_; tx_flags_=0; attempts_=0; tx_part_=0; tx_started_=millis(); transmit_();
         }
       }
@@ -305,8 +327,10 @@ void SedUdpTransport::loop() {
     if(!tx_.empty() && paused_tx_.empty()) {
       paused_tx_=std::move(tx_); tx_.clear(); paused_control_=std::move(tx_control_); paused_group_=tx_group_;
       paused_ack_timeout_=tx_ack_timeout_; paused_ack_resend_=tx_ack_resend_;
+      paused_peer_=tx_peer_; paused_peer_len_=tx_peer_len_;
     }
     schema_requested_=false; schema_building_=true;
+    schema_peer_=requested_schema_peer_; schema_peer_len_=requested_schema_peer_len_;
     ESP_LOGI(TAG,"Building entity descriptors for UDP onboarding/sync");
     client->on_device_info_request(); client->on_subscribe_homeassistant_services_request();
     client->on_list_entities_request();

@@ -34,23 +34,29 @@ class SedUdpTransport {
   void sleep();
   bool can_flush() const { return tx_.empty() && !schema_building_; }
   void cancel();
-  void request_schema();
+  void request_schema(const sockaddr_storage *reply_peer=nullptr, socklen_t reply_length=0);
   void set_key(const std::array<uint8_t, 32> &key);
  protected:
   static constexpr size_t HEADER=48, CHUNK=768, MAX_BODY=32768;
+  static constexpr uint16_t HA_PORT=6064;
   struct SavedPeer { uint8_t address[16]; uint16_t port; uint32_t scope; };
   void bind_peer_(const sockaddr_storage &peer, socklen_t length);
   void receive_();
   bool open_socket_();
   void reset_delivery_(const char *reason);
   bool send_(uint8_t kind, uint32_t group, uint16_t part, uint16_t parts,
-             const uint8_t *data, size_t size, uint8_t flags=0);
+             const uint8_t *data, size_t size, uint8_t flags=0,
+             const sockaddr_storage *destination=nullptr, socklen_t destination_length=0);
   void transmit_();
   void fail_(const char *reason);
   APIServer *owner_;
   std::unique_ptr<socket::Socket> socket_;
   sockaddr_storage peer_{};
   socklen_t peer_len_{0};
+  // Business listener and temporary onboarding replies are distinct endpoints.
+  // Every in-flight group retains its own peer across PROBE/schema exchanges.
+  sockaddr_storage tx_peer_{}, paused_peer_{}, requested_schema_peer_{}, schema_peer_{};
+  socklen_t tx_peer_len_{0}, paused_peer_len_{0}, requested_schema_peer_len_{0}, schema_peer_len_{0};
   uint16_t port_{0};
   bool network_connected_{false};
   uint32_t socket_retry_at_{0};

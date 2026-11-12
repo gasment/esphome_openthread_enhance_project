@@ -62,6 +62,7 @@ bool APIServer::sed_begin_batch(const void *owner, uint32_t timeout, uint32_t re
   this->sed_batch_done_ = std::move(done);
   this->sed_sleep_ack_ = false;
   this->sed_marker_sent_ = 0;
+  this->sed_poll(true);  // Shorten polling before the first DATA/ACK exchange.
   target->sed_begin_snapshot(this->sed_batch_entities_.empty() ? nullptr : &this->sed_batch_entities_);
   ESP_LOGD("thread_sed_api", "send %s started", this->sed_batch_token_.c_str());
   return true;

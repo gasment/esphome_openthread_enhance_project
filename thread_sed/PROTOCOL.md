@@ -27,7 +27,7 @@ ACK 组号对应 DATA/COMMAND，负载是被确认报文发送者的 8 字节随
 
 节点发布 _thread-sed._udp，端口默认 6064；TXT 包含 mac/name/transport/encryption/sleep。用户确认接入时 HA 发 PROBE，节点回复带 DESCRIPTORS 标记的 DATA，其中有 DeviceInfoResponse、thread_sed.session 元数据、实体描述及 ListEntitiesDoneResponse。HA 校验 MAC 后保存条目和描述。
 
-节点保存收到 PROBE 的 IPv6 地址和 UDP 端口，重启后可直接使用。HA 定期维护 PROBE 携带已缓存指纹，匹配时刷新端点并回复轻量 HEARTBEAT，不触发描述同步。HA 收到未知指纹的业务时请求 SCHEMA，暂存业务；节点暂停本组交付，优先同步描述，再恢复原组确认。未接入的 MAC 不由 HA 监听器自动创建实体。
+节点保存 HA 的 IPv6 地址与固定业务端口 6064，重启后可直接使用；接入 PROBE 的临时源端口只用于本次描述/心跳回复，不能覆盖业务端口。每个在途组固定目的端点，ACK 按该端点校验，描述暂停/恢复也保留原组端点。HA 定期维护 PROBE 携带已缓存指纹，匹配时刷新端点并回复轻量 HEARTBEAT，不触发描述同步。HA 收到未知指纹的业务时请求 SCHEMA，暂存业务；节点暂停本组交付，优先同步描述，再恢复原组确认。未接入的 MAC 不由 HA 监听器自动创建实体。
 
 ## 状态、事件与控制
 

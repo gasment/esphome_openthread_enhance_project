@@ -94,6 +94,7 @@ class UdpListener(asyncio.DatagramProtocol):
     async def _deliver(self,session,packet,payload,peer,identity):
         try:
             if session.stopping: return
+            processing_started=monotonic()
             accepted=await session.receive(packet,payload,peer)
             if not accepted:
                 if identity not in self.deferred and len(self.deferred)<16:
@@ -105,6 +106,7 @@ class UdpListener(asyncio.DatagramProtocol):
             self.acknowledged[identity]=monotonic()
             if len(self.acknowledged)>256: self.acknowledged.pop(next(iter(self.acknowledged)))
             self.send(session,ACK,peer,group=packet.group,payload=packet.boot)
+            _LOGGER.debug('Thread SED %s group=%s processed and ACK queued in %.1f ms',session.mac,packet.group,(monotonic()-processing_started)*1000)
             self.deferred.pop(identity,None)
             if packet.flags&2:
                 # Replay only fully reassembled groups after descriptors exist.
