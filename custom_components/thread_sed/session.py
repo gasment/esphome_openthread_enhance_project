@@ -92,7 +92,7 @@ class Session:
             if sock: sock.close()
             return
         self.connecting = True
-        client = APIClient(host, port, noise_psk=self.entry.data['noise_psk'],
+        client = APIClient(host, port, noise_psk=self.entry.data.get('noise_psk') or None,
                            expected_mac=self.entry.data['mac'], client_info='Thread SED', keepalive=30)
         metadata = asyncio.get_running_loop().create_future()
         async def on_stop(expected):

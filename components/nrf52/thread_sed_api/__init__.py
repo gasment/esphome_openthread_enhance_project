@@ -1,4 +1,4 @@
-"""Independent, Noise-only native API for Thread SED and REED devices."""
+"""Independent native API with optional Noise encryption for Thread SED and REED devices."""
 import hashlib
 import base64
 import esphome.codegen as cg
@@ -11,7 +11,11 @@ from esphome.components.logger import request_log_listener
 from esphome.const import CONF_ID, CONF_KEY, CONF_ENCRYPTION
 from esphome.core import CORE, CoroPriority, coroutine_with_priority
 
-AUTO_LOAD = ['network', 'socket', 'noise', 'mdns']
+def AUTO_LOAD(config):
+    components = ['network', 'socket', 'mdns']
+    if config and CONF_ENCRYPTION in config:
+        components.append('noise')
+    return components
 CONFLICTS_WITH = ['api']
 DEPENDENCIES = ['network']
 ns = cg.esphome_ns.namespace('thread_sed_api')
@@ -44,7 +48,7 @@ def sleep_id(value):
 
 CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.GenerateID(): cv.declare_id(APIServer),
-    cv.Required(CONF_ENCRYPTION): cv.Schema({cv.Required(CONF_KEY): cv.sensitive(noise_key)}),
+    cv.Optional(CONF_ENCRYPTION): cv.Schema({cv.Required(CONF_KEY): cv.sensitive(noise_key)}),
     cv.Optional('port', default=6053): cv.port,
     cv.Optional('deep_sleep_id'): sleep_id,
     cv.Optional('sleep_duration'): cv.positive_time_period_milliseconds,
@@ -73,6 +77,7 @@ def final_validate(config):
         'service': '_thread-sed', 'protocol': '_tcp', 'port': config['port'],
         'txt': {'v': '1', 'name': CORE.name,
                 'mac': '',
+                'encryption': 'noise' if CONF_ENCRYPTION in config else 'none',
                 'sleep': '1' if 'deep_sleep_id' in config else '0'},
     }))
     # MAC is a runtime value; mdns codegen reserves its dynamic TXT slot.
@@ -91,12 +96,17 @@ async def to_code(config):
     cg.add(var.set_port(config['port']))
     cg.add(var.set_reboot_timeout(0))
     cg.add(var.set_batch_delay(config['batch_delay']))
-    cg.add(var.set_noise_psk(new_psk_progmem(config[CONF_ENCRYPTION][CONF_KEY])))
+    if CONF_ENCRYPTION in config:
+        cg.add(var.set_noise_psk(new_psk_progmem(config[CONF_ENCRYPTION][CONF_KEY])))
+        cg.add_define('USE_THREAD_SED_API_NOISE')
+        cg.add_define('USE_THREAD_SED_API_NOISE_PSK_FROM_YAML')
+        enable_spare_ephemeral()
+    else:
+        cg.add_define('USE_THREAD_SED_API_PLAINTEXT')
     cg.add(var.set_sleep_budget(config['sleep_ack_timeout']))
     if 'sleep_duration' in config:
         cg.add(var.set_sleep_seconds(int(config['sleep_duration'].total_milliseconds)//1000))
-    for flag in ('USE_THREAD_SED_API', 'USE_THREAD_SED_API_NOISE',
-                 'USE_THREAD_SED_API_NOISE_PSK_FROM_YAML', 'USE_THREAD_SED_API_OUTGOING_CONNECTION',
+    for flag in ('USE_THREAD_SED_API', 'USE_THREAD_SED_API_OUTGOING_CONNECTION',
                  'USE_THREAD_SED_API_HOMEASSISTANT_SERVICES', 'USE_THREAD_SED_API_HOMEASSISTANT_STATES'):
         cg.add_define(flag)
     cg.add_define('MAX_THREAD_SED_API_CONNECTIONS', 2)
@@ -111,7 +121,6 @@ async def to_code(config):
     if 'deep_sleep_id' in config:
         cg.add_define('USE_THREAD_SED_SLEEP')
         cg.add(var.set_deep_sleep(await cg.get_variable(config['deep_sleep_id'])))
-    enable_spare_ephemeral()
     if CORE.is_nrf52:
         from esphome.components.zephyr import zephyr_add_prj_conf
         zephyr_add_prj_conf('NET_TCP', True)

@@ -19,6 +19,7 @@ class APIPlaintextFrameHelper final : public APIFrameHelper {
     frame_header_padding_ = HEADER_PADDING;
   }
   ~APIPlaintextFrameHelper() override = default;
+  APIError send_reverse_identity();
   APIError init() override;
   APIError loop() override;
   APIError read_packet(ReadPacketBuffer *buffer) override;

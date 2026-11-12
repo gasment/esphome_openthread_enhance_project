@@ -1933,10 +1933,10 @@ bool APIConnection::send_hello_response_(const HelloRequest &msg) {
   this->complete_authentication_();
 
 #ifdef USE_THREAD_SED_API_OUTGOING_CONNECTION
-  // With a PSK set only key-verified transports reach hello: plaintext and
-  // zero-PSK are rejected, and pre-activation sessions are force-closed
+  // Noise builds require a configured key. Explicit plaintext builds accept
+  // the declared Thread SED client without shared-key authentication.
   if ((msg.outgoing_connection_target || msg.client_info == "Thread SED") && !this->flags_.outgoing_connection_target) {
-    if (this->parent_->get_noise_ctx().has_psk()) {
+    if (this->parent_->sed_transport_ready()) {
       this->flags_.outgoing_connection_target = true;
       this->parent_->on_outgoing_target_client(this);
     } else {
@@ -2068,9 +2068,9 @@ bool APIConnection::send_device_info_response_() {
   // one) so this advertisement survives the plaintext removal in 2027.2.0.
   resp.api_encryption_provisionable = !this->parent_->get_noise_ctx().has_psk();
 #endif
+#endif
 #ifdef USE_THREAD_SED_API_OUTGOING_CONNECTION
   resp.api_outgoing_connection_supported = true;
-#endif
 #endif
 #ifdef USE_DEVICES
   size_t device_index = 0;

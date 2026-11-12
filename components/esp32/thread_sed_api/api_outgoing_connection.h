@@ -3,9 +3,6 @@
 #include "esphome/core/defines.h"
 #if defined(USE_THREAD_SED_API) && defined(USE_THREAD_SED_API_OUTGOING_CONNECTION)
 
-#ifndef USE_THREAD_SED_API_NOISE
-#error "api outgoing_connection needs noise encryption so the peer is verified by key"
-#endif
 
 #include "esphome/components/socket/socket.h"
 #include "esphome/core/preferences.h"
@@ -36,8 +33,8 @@ struct SavedOutgoingTarget {
 } PACKED;  // NOLINT
 
 /// Dials out when no dial-back target client is connected. Only the TCP
-/// direction flips: the device stays the Noise responder, so both sides
-/// still verify by key. Targets the YAML host or the last remembered client.
+/// direction flips. Noise mode verifies by key; explicit plaintext mode
+/// uses the native unencrypted transport. Targets the last remembered client.
 class OutgoingConnectionManager {
  public:
   void setup();

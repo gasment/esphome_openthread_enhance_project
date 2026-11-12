@@ -356,7 +356,7 @@ APIConnection *APIServer::add_outgoing_client_(std::unique_ptr<socket::Socket> s
   // the PSK may have been cleared since the dial started (mark_outgoing()
   // needs the noise helper)
   const bool at_limit = this->at_client_limit_();
-  if (at_limit || !this->noise_ctx_.has_psk()) {
+  if (at_limit || !this->sed_transport_ready()) {
     ESP_LOGW(TAG, "Dropping outgoing connection (%s)",
              at_limit ? LOG_STR_LITERAL("max connections") : LOG_STR_LITERAL("no key"));
     return nullptr;

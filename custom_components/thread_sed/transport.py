@@ -14,6 +14,20 @@ def normalize_mac(value: str) -> str:
         raise ValueError('Invalid MAC address')
     return value
 
+PLAIN_PREFIX = b'TSED1 '
+PLAIN_IDENTITY_SIZE = 24
+
+def decode_plain_identity(data):
+    if len(data) < len(PLAIN_PREFIX):
+        return None
+    if not data.startswith(PLAIN_PREFIX):
+        raise ValueError('Invalid plaintext reverse identity')
+    if len(data) < PLAIN_IDENTITY_SIZE:
+        return None
+    if data[PLAIN_IDENTITY_SIZE-1] != 10:
+        raise ValueError('Invalid plaintext identity terminator')
+    return normalize_mac(data[6:23].decode('ascii'))
+
 def decode_server_hello(data):
     if len(data) < 3:
         return None
@@ -28,7 +42,7 @@ def decode_server_hello(data):
         raise ValueError('Invalid Noise identity')
     return fields[0][1:].decode('utf-8'), normalize_mac(fields[1].decode('ascii'))
 
-async def peek_server_hello(sock):
+async def peek_reverse_identity(sock):
     # Leave every byte unread for aioesphomeapi's native Noise handshake.
     async with asyncio.timeout(5):
         while True:
@@ -37,9 +51,16 @@ async def peek_server_hello(sock):
             except BlockingIOError:
                 data = None
             if data == b'':
-                raise ConnectionError('Peer closed before Noise hello')
-            if data is not None and (identity := decode_server_hello(data)) is not None:
-                return identity
+                raise ConnectionError('Peer closed before reverse identity')
+            if data:
+                if data[0] == 1:
+                    if (identity := decode_server_hello(data)) is not None:
+                        return identity[1], 'noise'
+                elif data[0] == PLAIN_PREFIX[0]:
+                    if (mac := decode_plain_identity(data)) is not None:
+                        return mac, 'none'
+                else:
+                    raise ValueError('Unknown reverse transport')
             await asyncio.sleep(.01)
 
 class ReverseListener:
@@ -82,10 +103,21 @@ class ReverseListener:
     async def _route(self, sock, peer):
         adopted = False
         try:
-            _name,mac = await peek_server_hello(sock)
+            mac,mode = await peek_reverse_identity(sock)
             session = self.sessions.get(mac)
             if session is None or session.connecting or session.online:
                 return
+            expected_mode = 'noise' if session.entry.data.get('noise_psk') else 'none'
+            if mode != expected_mode:
+                raise ValueError('Transport does not match configured encryption')
+            if mode == 'none':
+                # Peek completed the entire preface; consume exactly those bytes.
+                # Native plaintext frames that follow remain unread.
+                remaining = PLAIN_IDENTITY_SIZE
+                while remaining:
+                    consumed = await asyncio.get_running_loop().sock_recv(sock,remaining)
+                    if not consumed: raise ConnectionError('Truncated plaintext identity')
+                    remaining -= len(consumed)
             await session.connect(peer[0],peer[1],sock=sock)
             adopted = True
         except (OSError, ValueError, TimeoutError, APIConnectionError):

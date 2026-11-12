@@ -402,14 +402,17 @@ class APIConnection final : public APIServerConnectionBase {
 #ifdef USE_THREAD_SED_API_OUTGOING_CONNECTION
   /// Get the peer address itself, for remembering a dial-back target
   int getpeername(struct sockaddr *addr, socklen_t *addrlen) const { return this->helper_->getpeername(addr, addrlen); }
-  /// Outgoing connection: send our server hello immediately so the peer can
-  /// pick the matching key. Outgoing connections are only dialed when a PSK
-  /// is set, so the helper is always the noise helper. Call after start().
+  /// Outgoing connection: send the Noise hello or plaintext routing identity.
+  /// The selected transport is fixed by YAML. Call after start().
   void mark_outgoing() {
     if (this->flags_.remove) {
       return;  // start() failed; the connection is already being torn down
     }
+#ifdef USE_THREAD_SED_API_NOISE
     APIError err = static_cast<APINoiseFrameHelper *>(this->helper_.get())->send_server_hello_first();
+#else
+    APIError err = static_cast<APIPlaintextFrameHelper *>(this->helper_.get())->send_reverse_identity();
+#endif
     if (err != APIError::OK) {
       this->fatal_error_with_log_(LOG_STR("Server hello failed"), err);
     }

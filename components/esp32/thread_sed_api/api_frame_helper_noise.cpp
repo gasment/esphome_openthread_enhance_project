@@ -295,18 +295,18 @@ APIError APINoiseFrameHelper::state_action_client_hello_() {
 }
 APIError APINoiseFrameHelper::send_server_hello_frame_() {
   const auto &name = App.get_name();
-  char mac[MAC_ADDRESS_BUFFER_SIZE];
-  get_mac_address_into_buffer(mac);
+  char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+  get_mac_address_pretty_into_buffer(mac);
 
   // Calculate positions and sizes
   size_t name_len = name.size() + 1;  // including null terminator
   size_t name_offset = 1;
   size_t mac_offset = name_offset + name_len;
-  size_t total_size = 1 + name_len + MAC_ADDRESS_BUFFER_SIZE;
+  size_t total_size = 1 + name_len + MAC_ADDRESS_PRETTY_BUFFER_SIZE;
 
   // 1 (proto) + name (max ESPHOME_DEVICE_NAME_MAX_LEN) + 1 (name null)
-  // + mac (MAC_ADDRESS_BUFFER_SIZE - 1) + 1 (mac null)
-  constexpr size_t max_msg_size = 1 + ESPHOME_DEVICE_NAME_MAX_LEN + 1 + MAC_ADDRESS_BUFFER_SIZE;
+  // + mac (MAC_ADDRESS_PRETTY_BUFFER_SIZE - 1) + 1 (mac null)
+  constexpr size_t max_msg_size = 1 + ESPHOME_DEVICE_NAME_MAX_LEN + 1 + MAC_ADDRESS_PRETTY_BUFFER_SIZE;
   uint8_t msg[max_msg_size];
 
   // chosen proto
@@ -315,7 +315,7 @@ APIError APINoiseFrameHelper::send_server_hello_frame_() {
   // node name, terminated by null byte
   std::memcpy(msg + name_offset, name.c_str(), name_len);
   // node mac, terminated by null byte
-  std::memcpy(msg + mac_offset, mac, MAC_ADDRESS_BUFFER_SIZE);
+  std::memcpy(msg + mac_offset, mac, MAC_ADDRESS_PRETTY_BUFFER_SIZE);
 
   return write_frame_(msg, total_size);
 }

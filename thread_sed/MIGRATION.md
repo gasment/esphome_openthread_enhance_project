@@ -34,8 +34,6 @@
 -    - id: key_event
 +thread_sed_api:
 +  id: sed_api
-+  encryption:
-+    key: !secret thread_sed_noise_key  # 独立的 32 字节 base64 Noise key，接入 HA 时输入
 +  deep_sleep_id: sleep_control        # 自动加入原 deep_sleep_nrf52 的休眠 guard
 
  # openthread_nrf52、deep_sleep_nrf52 和实体定义继续保留。
@@ -54,6 +52,7 @@ esphome:
 
 thread_sed_api:
   id: sed_api
+  # 可选：不需要加密时省略以下整个块，HA 中密钥留空。
   encryption:
     key: !secret thread_sed_noise_key
   deep_sleep_id: sleep_control
@@ -73,8 +72,7 @@ thread_sed_api:
 -thread_entity_bridge:                # nRF52 原名为 thread_entity_bridge_nrf52
 -  ...
 +thread_sed_api:                      # 两个平台的新组件名相同
-+  encryption:
-+    key: !secret thread_sed_noise_key
++  # encryption 可选；不配置时 HA 接入无需 key。
 ```
 
 external_components 中同步移除旧名字、加入 `thread_sed_api`，保留本平台的 OpenThread 组件。常供电 REED 不配置 `deep_sleep_id`。
@@ -86,6 +84,7 @@ external_components 中同步移除旧名字、加入 `thread_sed_api`，保留�
 ```yaml
 thread_sed_api:
   id: sed_api
+  # 可选：不需要加密时省略以下整个块，HA 中密钥留空。
   encryption:
     key: !secret thread_sed_noise_key
   sleep_duration: 30min               # 告知 HA 的预期时长，与实际休眠时长一致
@@ -115,4 +114,6 @@ script:
 -  ...                                # 整个块删除，不再在 BR 上提供业务网关
 ```
 
-HA 中移除旧 OpenThread Gateway 集成，安装 `custom_components/thread_sed`，通过发现卡片逐个接入。BR 无需配置 HA 的 Noise key，HA 宿主机必须有可路由 IPv6。防火墙放行节点 TCP 6053 和 HA TCP 6064。
+HA 中移除旧 OpenThread Gateway 集成，安装 `custom_components/thread_sed`，通过发现卡片逐个接入。BR 无需配置节点的 Noise key，HA 宿主机必须有可路由 IPv6。防火墙放行节点 TCP 6053 和 HA TCP 6064。
+
+`encryption` 已改为可选。最简 SED 配置仅需 `thread_sed_api: {deep_sleep_id: sleep_control}`；常供电节点可直接使用 `thread_sed_api: {}`。

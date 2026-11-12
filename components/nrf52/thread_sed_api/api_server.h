@@ -60,6 +60,13 @@ class APIServer final : public Component
  public:
   APIServer();
   void set_sleep_budget(uint32_t ms) { sed_sleep_budget_ = ms; }
+  bool sed_transport_ready() const {
+#ifdef USE_THREAD_SED_API_NOISE
+    return this->noise_ctx_.has_psk();
+#else
+    return true;
+#endif
+  }
   bool sed_has_sleep() const { return sed_sleep_ != nullptr || sed_expected_sleep_seconds_ != 0; }
 #ifdef USE_THREAD_SED_SLEEP
   void set_deep_sleep(deep_sleep_nrf52::DeepSleepComponent *sleep) { sed_sleep_ = sleep; }

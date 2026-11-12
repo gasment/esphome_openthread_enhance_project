@@ -1,7 +1,8 @@
-"""Zeroconf discovery, encrypted onboarding and key reauthentication."""
+"""Zeroconf discovery, optional encryption and device onboarding."""
 import asyncio
 import base64
 from aioesphomeapi import APIClient, APIConnectionError
+from aioesphomeapi.core import RequiresEncryptionAPIError
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
 try:
@@ -37,9 +38,11 @@ class ThreadSedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data = {**self.discovered, **user_input}
             client = None
             try:
-                if len(base64.b64decode(data['noise_psk'], validate=True)) != 32:
+                key = (data.get('noise_psk') or '').strip()
+                data['noise_psk'] = key
+                if key and len(base64.b64decode(key, validate=True)) != 32:
                     raise ValueError('Noise key must contain 32 bytes')
-                client = APIClient(data['host'], data.get('port',6053), noise_psk=data['noise_psk'], client_info='Thread SED')
+                client = APIClient(data['host'], data.get('port',6053), noise_psk=key or None, client_info='Thread SED')
                 await client.connect(login=False, log_errors=False)
                 info = await client.device_info()
                 mac = normalize_mac(info.mac_address)
@@ -56,6 +59,8 @@ class ThreadSedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_update_reload_and_abort(self.reauth_entry, data_updates=data)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(title=info.friendly_name or info.name, data=data)
+            except RequiresEncryptionAPIError:
+                errors['base'] = 'encryption_required'
             except (APIConnectionError, OSError, asyncio.TimeoutError):
                 errors['base'] = 'cannot_connect'
             except ValueError:
@@ -66,7 +71,7 @@ class ThreadSedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self.discovered:
             fields[vol.Required('host')] = str
             fields[vol.Optional('port', default=6053)] = int
-        fields[vol.Required('noise_psk')] = str
+        fields[vol.Optional('noise_psk')] = str
         return self.async_show_form(step_id='user', data_schema=vol.Schema(fields), errors=errors)
 
     async def async_step_reauth(self, entry_data):

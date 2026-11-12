@@ -18,6 +18,18 @@ namespace esphome::thread_sed_api {
 
 static const char *const TAG = "api.plaintext";
 
+APIError APIPlaintextFrameHelper::send_reverse_identity() {
+  // Routing only, not authentication. Removed by HA before native plaintext decoding.
+  char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+  get_mac_address_pretty_into_buffer(mac);
+  char identity[6 + MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+  static_assert(sizeof(identity) == 24);
+  memcpy(identity, "TSED1 ", 6);
+  memcpy(identity + 6, mac, sizeof(mac));
+  identity[sizeof(identity) - 1] = '\n';
+  return this->write_raw_buf_(identity, sizeof(identity));
+}
+
 // Maximum bytes to log in hex format (168 * 3 = 504, under TX buffer size of 512)
 static constexpr size_t API_MAX_LOG_BYTES = 168;
 

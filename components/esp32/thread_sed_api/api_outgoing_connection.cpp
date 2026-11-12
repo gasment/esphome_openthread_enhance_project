@@ -158,7 +158,7 @@ void OutgoingConnectionManager::try_dial_(APIServer *server, uint32_t now) {
   socklen_t addr_len = this->target_sockaddr_(&addr);
   const bool at_limit = server->at_client_limit_();
   // No target is the steady state until a dial-back client has ever connected
-  if (addr_len == 0 || at_limit || !server->noise_ctx_.has_psk()) {
+  if (addr_len == 0 || at_limit || !server->sed_transport_ready()) {
     // Repeats for as long as the reason holds, so keep it out of debug logs
     ESP_LOGV(TAG, "Not dialing: %s",
              addr_len == 0 ? LOG_STR_LITERAL("no target")

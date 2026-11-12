@@ -15,7 +15,7 @@
   "issue_tracker": "https://github.com/gasment/esphome_openthread_enhance_project/issues",
   "name": "Thread SED",
   "requirements": [],
-  "version": "0.2.1",
+  "version": "0.2.2",
   "zeroconf": [
     {
       "type": "_thread-sed._tcp.local."

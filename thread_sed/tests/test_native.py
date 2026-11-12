@@ -101,6 +101,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         node=NativePeer(); result=asyncio.get_running_loop().create_future()
         client=APIClient('::1',6064,noise_psk=PSK,expected_mac=MAC,client_info='Thread SED')
         class Session:
+            entry=__import__('types').SimpleNamespace(data={'noise_psk':PSK})
             connecting=False
             online=False
             async def connect(self,host,port,sock=None):
