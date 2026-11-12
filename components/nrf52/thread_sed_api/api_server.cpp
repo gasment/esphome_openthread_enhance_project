@@ -222,8 +222,6 @@ void APIServer::loop() {
   uint8_t client_index = 0;
   while (client_index < this->api_connection_count_) {
     auto &client = this->clients_[client_index];
-  if (this->sed_auto_client_ == client.get()) this->sed_auto_disconnected_ = true;
-  if (this->sed_batch_done_ && this->sed_batch_client_ == client.get()) this->sed_batch_disconnected_ = true;
 
     // Common case: process active client
     if (!client->flags_.remove) {

@@ -182,13 +182,15 @@ void OutgoingConnectionManager::try_dial_(APIServer *server, uint32_t now) {
   ESP_LOGD(TAG, "Dialing %s:%u", host, THREAD_SED_API_OUTGOING_CONNECTION_PORT);
 #endif
   int err = this->dial_socket_->connect((struct sockaddr *) &addr, addr_len);
+  const int connect_errno = err == 0 ? 0 : errno;
+  ESP_LOGD(TAG, "Nonblocking connect returned %d, errno %d", err, connect_errno);
   if (err == 0) {
     // Immediate success (possible for localhost)
     this->handoff_(server, now);
     return;
   }
-  if (errno != EINPROGRESS) {
-    ESP_LOGW(TAG, "Connect failed: %d", errno);
+  if (connect_errno != EINPROGRESS) {
+    ESP_LOGW(TAG, "Connect failed: %d", connect_errno);
     this->schedule_retry_(now);
     return;
   }
@@ -217,6 +219,7 @@ void OutgoingConnectionManager::poll_connect_(APIServer *server, uint32_t now) {
 }
 
 void OutgoingConnectionManager::handoff_(APIServer *server, uint32_t now) {
+  ESP_LOGD(TAG, "TCP connected; initializing API transport");
   this->dialed_conn_ = server->add_outgoing_client_(std::move(this->dial_socket_));
   if (this->dialed_conn_ == nullptr) {
     // Only preconditions (slot limit, key cleared) refuse the handoff; the

@@ -168,6 +168,7 @@ APIConnection::APIConnection(std::unique_ptr<socket::Socket> sock, APIServer *pa
 void APIConnection::start() {
   this->last_traffic_ = App.get_loop_component_start_time();
 
+  ESP_LOGD(TAG, "Initializing transport helper");
   APIError err = this->helper_->init();
   if (err != APIError::OK) {
     this->fatal_error_with_log_(LOG_STR("Helper init failed"), err);
