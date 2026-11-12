@@ -1,4 +1,6 @@
 #include "user_services.h"
+
+#ifdef USE_THREAD_SED_API_USER_DEFINED_ACTIONS
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "esphome/core/string_ref.h"
@@ -137,3 +139,5 @@ template<> enums::ServiceArgType to_service_arg_type<const FixedVector<std::stri
 }
 
 }  // namespace esphome::thread_sed_api
+
+#endif  // USE_THREAD_SED_API_USER_DEFINED_ACTIONS

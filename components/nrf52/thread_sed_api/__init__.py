@@ -8,6 +8,7 @@ from esphome import automation
 from esphome.components import mdns, socket
 from esphome.components.noise import validate_encryption_key, new_psk_progmem, enable_spare_ephemeral
 from esphome.components.logger import request_log_listener
+from esphome.config_helpers import filter_source_files_from_defines, get_logger_level
 from esphome.const import CONF_ID, CONF_KEY, CONF_ENCRYPTION
 from esphome.core import CORE, CoroPriority, coroutine_with_priority
 
@@ -125,3 +126,20 @@ async def to_code(config):
         from esphome.components.zephyr import zephyr_add_prj_conf
         zephyr_add_prj_conf('NET_TCP', True)
     cg.add_global(ns.using)
+
+
+# Upstream's optional translation units must follow this fork's feature flags.
+# In particular, user_services.h hides its types without USER_DEFINED_ACTIONS.
+_define_filter = filter_source_files_from_defines({
+    'user_services.cpp': 'USE_THREAD_SED_API_USER_DEFINED_ACTIONS',
+    'api_frame_helper_noise.cpp': 'USE_THREAD_SED_API_NOISE',
+    'api_frame_helper_plaintext.cpp': 'USE_THREAD_SED_API_PLAINTEXT',
+    'api_wizard.cpp': 'USE_THREAD_SED_API_WIZARD',
+    'api_outgoing_connection.cpp': 'USE_THREAD_SED_API_OUTGOING_CONNECTION',
+})
+
+def FILTER_SOURCE_FILES():
+    excluded = _define_filter()
+    if get_logger_level() != 'VERY_VERBOSE':
+        excluded.append('api_pb2_dump.cpp')
+    return excluded

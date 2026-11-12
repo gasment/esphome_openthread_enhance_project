@@ -54,3 +54,10 @@
 - 32 项测试通过，覆盖两种传输的状态、缓存、事件/休眠确认、反向 socket 以及加密条目拒绝明文降级。ESP32/nRF52 × 明文/Noise 四组配置与内存内代码生成通过；未运行固件编译，待上板及真实 HA 验证。
 
 - 统一反向连接 MAC 的冒号格式，与原生 DeviceInfo 一致；明文路由前缀固定 24 字节。
+
+## 修复可选源文件误编译
+
+- 补回 fork 时遗漏的 FILTER_SOURCE_FILES，按 Thread SED API 自身宏筛选自定义服务、Noise/明文帧处理器、wizard、反向连接，以及按日志等级筛选 protobuf dump。
+- user_services.cpp 增加与头文件声明一致的 USER_DEFINED_ACTIONS 保护，避免在未开启自定义服务时引用 UserServiceStatic / ExecuteServiceArgument 等不存在的类型。
+- 此次修复不通过开启无用的用户服务功能来消除报错；已保留的实体上报、明文/加密与休眠确认行为不变。
+- 不运行固件编译；通过配置、内存内代码生成和实际源文件筛选检查验证，固件构建由用户执行。
