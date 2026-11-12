@@ -10,12 +10,6 @@ esp_err_t thread_br_web_start(uint16_t port, const char *authorization, bool use
 void thread_br_web_stop(void);
 typedef struct {
     void *context;
-    cJSON *(*get)(void *, const char *, int *);
-    cJSON *(*post)(void *, const char *, const cJSON *, int *);
-} thread_br_thread_gateway_web_t;
-void thread_br_web_set_thread_gateway(const thread_br_thread_gateway_web_t *thread_gateway);
-typedef struct {
-    void *context;
     cJSON *(*get)(void *, int *);
     cJSON *(*post)(void *, const cJSON *, int *);
 } thread_br_commissioner_web_t;

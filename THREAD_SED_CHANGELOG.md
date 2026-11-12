@@ -1,0 +1,47 @@
+# Thread SED 改版更新日志（2026-11-12）
+
+## 逻辑变更
+
+- 新增 ESP32 / nRF52 的同名 `thread_sed_api`，独立 fork 原生 TCP + Noise + Protobuf，不加载官方 `api`。强制配置 Noise key，以原生 MAC 标识设备，实体按原生描述自动暴露。
+- HA 集成更名为 Thread SED，目录改为 `custom_components/thread_sed`，每个节点一个条目；最低 HA 2026.6。使用 HA ESPHome 依赖提供的客户端，避免自行替换公共依赖。
+- 节点公告 `_thread-sed._tcp`，经 BR 的 SRP/mDNS 代理进入 HA 发现卡片；用户确认并认证后接入。设备唤醒后拨回 HA TCP 6064，首次/地址恢复时可由 HA 正向连接。
+- nRF52 自动接入 deep_sleep_nrf52 guard；ESP32 提供休眠确认条件供脚本调用。缩短唤醒窗口中的 SED Data Poll，不切换 Thread 模式；休眠前等待 HA 应用层确认、恢复轮询、关闭 TCP。发送截止时间默认 10s，故障时允许休眠。
+- HA 持久化实体清单、最后状态和事件去重进度；按固件配置指纹、编译时间与版本更新清单，常规重连跳过枚举；实体增删不重启 HA。离线控制不排队。
+- 事件保留于最多 32 条的 RAM 队列，HA 确认后删除；断电、队列溢出和 HA 崩溃边界不是严格 exactly-once。
+- 移除四个 SED/REED transporter、两个实体桥、BR thread_gateway、旧 custom_components/openthread_gateway 和旧网关文档/工具。
+- 删除 BR 网关 Web 路由、导航、资源与构建开关，保留 BR 路由、配网、拓扑及其余 Web 功能；使用 thread_br/build_web_assets.py 重新打包。
+- P2P、OTA、Thread 平台组件和 tools/br_manager 保留。
+
+## YAML diff 与安装
+
+完整带注释 diff：[thread_sed/MIGRATION.md](thread_sed/MIGRATION.md)。
+
+```diff
+-api:
+-  ...
+-thread_sed_transporter_nrf52:
+-  ...
+-thread_entity_bridge_nrf52:
+-  ...
++thread_sed_api:
++  id: sed_api
++  encryption:
++    key: !secret thread_sed_noise_key # 32 字节 base64，接入 HA 时输入同一密钥
++  deep_sleep_id: sleep_control       # 仅 nRF52 的自动休眠 guard
+```
+
+同步修改 external_components 的组件名单，删除旧 transporter 的发送/休眠自动化。常供电 REED 使用同一个组件，不配置 deep_sleep_id。ESP32 的休眠脚本见迁移文档。BR 中删除整个 thread_gateway 块。HA 旧绑定与旧实体历史不自动迁移。
+
+## 验证范围
+
+19 项自动化测试通过，4 项无效配置拒绝检查通过。完成 ESP32 / nRF52 配置验证、内存内 C++ 生成、Python 静态检查，以及真实原生客户端/Noise/TCP 的自动化测试。测试覆盖反向连接、IPv6、错误密钥拒绝、状态上报、实体缓存、事件去重与休眠确认。
+
+**未运行固件编译；待用户编译及上板测试。真实 HA 上的发现卡片、实体动态增删、长时间休眠、BR/HA 重启和 IPv6 前缀变化仍待联调验收。**
+
+## HA 2026.11 基线调整
+
+- 当前最低 HA 版本调整为 2026.11.0；CI 和协议测试使用该版本的 aioesphomeapi 46.25.0。
+- 删除为 HA 2026.6 编写的 ReverseBridge / 随机本机端口和密文转接任务。
+- 节点反向连接由原生客户端直接接收；共享监听器只窥视 hello 来定位已配置的设备，不消费握手数据。Noise 认证仍由原生客户端完成。
+- 20 项测试通过，新增完整 Session 直接接收反向 socket 的验证；未运行固件编译，未在真实 HA 实例上验收。
+- 澄清当前没有旧式手动 send action；传感器发布自动上报、连接后同步缓存，唤醒采样仍由节点自动化安排。本次没有修改 Noise key 的配置/接入策略。

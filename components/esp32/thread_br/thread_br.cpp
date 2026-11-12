@@ -336,7 +336,7 @@ bool ThreadBorderRouter::initialize_() {
   }
   rcp_fault_ = false;
   healthy_ = true;
-  ESP_LOGI(TAG, "Thread started independently of the backbone; gateway UDP can start after attachment");
+  ESP_LOGI(TAG, "Thread started independently of the backbone");
   return true;
 }
 
@@ -356,7 +356,7 @@ void ThreadBorderRouter::service_backbone_() {
     }
     backbone_up_ = false;
     backbone_retry_ = false;
-    ESP_LOGI(TAG, "LAN backbone unavailable; Thread and gateway UDP remain active");
+    ESP_LOGI(TAG, "LAN backbone unavailable; Thread remains active");
   } else {
     backbone_attempt_at_ = now;
     backbone_retry_ = true;

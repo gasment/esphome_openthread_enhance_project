@@ -16,7 +16,6 @@
 #endif
 
 #ifdef USE_THREAD_GATEWAY
-namespace esphome::thread_gateway { class ThreadGateway; }
 #endif
 namespace esphome::thread_br {
 
@@ -28,7 +27,6 @@ class ThreadBorderRouter : public PollingComponent {
   uint32_t get_radio_activity_sequence() const { return radio_activity_sequence_.load(); }
 #endif
 #ifdef USE_THREAD_GATEWAY
-  void set_thread_gateway(thread_gateway::ThreadGateway *thread_gateway) { thread_gateway_ = thread_gateway; }
 #endif
   void setup() override;
   void loop() override;
@@ -78,7 +76,6 @@ class ThreadBorderRouter : public PollingComponent {
   enum class State { WAITING, STARTING, READY, FAILED, STOPPING };
   static ThreadBorderRouter *instance_;
 #ifdef USE_THREAD_GATEWAY
-  thread_gateway::ThreadGateway *thread_gateway_{nullptr};
 #endif
   static void start_task_(void *arg);
 #ifdef CONFIG_THREAD_BR_WEB

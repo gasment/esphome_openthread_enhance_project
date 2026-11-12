@@ -161,9 +161,6 @@ var pages = [
 // THREAD_COMMISSIONER_NAV_BEGIN
   {href: '/commissioner.html', label: '配网'},
 // THREAD_COMMISSIONER_NAV_END
-// THREAD_GATEWAY_NAV_BEGIN
-  {href: '/thread_gateway', label: '网关管理', threadGateway: true},
-// THREAD_GATEWAY_NAV_END
   {href: '/tools.html', label: '工具'},
   {href: '/about.html', label: '关于'}
 ];
@@ -197,21 +194,13 @@ for (var i = 0; i < pages.length; i++) {
     }
     html += '</ul></li>';
   } else {
-    var active = (p === pg.href || (pg.threadGateway && (p.indexOf('/thread_gateway/node/') === 0 || p === '/thread_gateway.html')) || (p === '/' && pg.href === '/index.html'))
+    var active = (p === pg.href || (p === '/' && pg.href === '/index.html'))
                      ? ' class="active"'
                      : '';
     html +=
-        '<li' + (pg.threadGateway ? ' id="threadGatewayNav" hidden' : '') + '><a href="' + pg.href + '"' + active + '>' + pg.label + '</a></li>';
+        '<li><a href="' + pg.href + '"' + active + '>' + pg.label + '</a></li>';
   }
 }
 html += '</ul>';
 nav.innerHTML = html;
-// THREAD_GATEWAY_NAV_BEGIN
-fetch('/thread_gateway/api/info', {cache: 'no-store', credentials: 'same-origin'})
-    .then(function(response) { return response.ok ? response.json() : null; })
-    .then(function(info) {
-      var entry = document.getElementById('threadGatewayNav');
-      if (entry && info && info.enabled) entry.hidden = false;
-    }).catch(function() {});
-// THREAD_GATEWAY_NAV_END
 })();

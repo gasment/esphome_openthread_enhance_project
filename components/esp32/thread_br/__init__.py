@@ -30,9 +30,6 @@ ns = cg.esphome_ns.namespace("thread_br")
 ThreadBorderRouter = ns.class_("ThreadBorderRouter", cg.PollingComponent)
 
 
-def gateway_web_enabled(full_config):
-    return "web" in full_config.get("thread_br", {}) and "thread_gateway" in full_config
-
 
 def filter_source_files():
     config = CORE.config.get("thread_br", {})
@@ -308,7 +305,6 @@ async def to_code(config):
     add_idf_component(name="thread_br_rcp", path=str(Path(__file__).parent / "thread_br_rcp"))
     options = {
         "CONFIG_THREAD_BR_WEB": web is not None,
-        "CONFIG_THREAD_BR_GATEWAY_WEB": gateway_web_enabled(CORE.config),
         "CONFIG_THREAD_BR_COMMISSIONER_WEB": commissioner_enabled,
         "CONFIG_OPENTHREAD_ENABLED": True,
         "CONFIG_OPENTHREAD_FTD": True,

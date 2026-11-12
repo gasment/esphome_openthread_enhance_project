@@ -304,6 +304,6 @@ ACK根据对端地址与端口、启动会话、消息编号和send_flag匹配�
 ACK不包含负载，type=0，回显session、message_id和send_flag。
 
 已使用ESPHome 2026.9.1 / ESP-IDF 5.5.5，在ESP32-H2上完成 `openthread`、`openthread_info`、
-`thread_p2p_transporter`、`thread_reed_transporter` 及其 `thread_entity_bridge` 依赖的共存编译。
+P2P 通道与 Thread SED API 独立；旧的 transporter / 实体桥业务链路已移除。
 覆盖三种负载、接收过滤、延时上下文、本地发布、接收回调内发送和ACK回调。
 构建检查资料位于项目 `temp`，未刷写设备或验证实机收发、多跳及ACK丢失重试。

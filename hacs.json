@@ -1,4 +1,5 @@
 {
-  "name": "OpenThread Gateway",
-  "homeassistant": "2026.6.0"
+  "name": "Thread SED",
+  "homeassistant": "2026.11.0",
+  "render_readme": true
 }

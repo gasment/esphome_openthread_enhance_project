@@ -39,9 +39,8 @@ features:
 |项目|平台适配|功能|
 | :----------------------------------------------------: | :----------------------------------------------: | :---------------------------------------------: |
 |Thread边界路由|✅ESP32 ❌nRF52|负责Thread内外部的通讯转换|
-|Thread网关|✅ESP32 ❌nRF52|负责管理Thread节点并代理HA实体|
+|Thread SED|✅ESP32 ✅nRF52|通过独立原生 API 接入 HA 的 Thread SED 集成|
 |Thread节点-API模式|✅ESP32 ✅nRF52|接入Thread网络并直接连接到HA|
-|Thread节点-网关模式|✅ESP32 ✅nRF52|接入Thread网络并通过Thread网关代理HA实体|
 |Thread节点-P2P|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
 |Thread节点-访问LAN/WAN|✅ESP32 ❌nRF52|Thread节点可访问外部网络资源|
 |BR Web 管理台| ✅Docker✅Python|自动发现并集中登录局域网内的BR|
@@ -72,3 +71,8 @@ features:
 独立的 [OpenThread Gateway HA 集成](openthread_gateway/README.md)，提供 v3 IPv6 UDP 后端、人工接入及动态实体管理。ESP32 和 nRF52 SED 已增加 v3 适配（待编译上板），两个 REED transporter 仍待迁移。详见 [SED YAML diff](openthread_gateway/SED_MIGRATION.md)。
 
 集成运行文件位于 `custom_components/openthread_gateway`，本仓库根目录提供 `hacs.json`，可按 Integration 类型添加到 HACS / Marketplace。安装后重启 HA，再添加 OpenThread Gateway 集成。详见 [安装说明](openthread_gateway/README.md)和[发布说明](openthread_gateway/PUBLISHING.md)。
+
+
+## Thread SED（破坏性更新）
+
+旧 transporter、实体桥和 UDP 网关已移除。使用 `thread_sed_api` 与 HA **Thread SED** 集成，见 [迁移说明与 YAML diff](thread_sed/MIGRATION.md)。BR 保留路由、配网和 Web 管理。

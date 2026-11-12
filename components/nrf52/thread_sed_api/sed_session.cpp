@@ -1,0 +1,103 @@
+#include "api_server.h"
+#include "esphome/core/application.h"
+#include "esphome/core/helpers.h"
+#ifdef USE_THREAD_SED_NRF52
+#include "esphome/components/openthread_nrf52/openthread_nrf52.h"
+namespace sed_ot = esphome::openthread_nrf52;
+#else
+#include "esphome/components/openthread/openthread.h"
+namespace sed_ot = esphome::openthread;
+#endif
+#include <openthread/link.h>
+namespace esphome::thread_sed_api {
+bool APIServer::sed_send(const char *service, const std::string &value) {
+  HomeassistantActionRequest call; call.service = service;
+  call.data.init(1);
+  HomeassistantServiceMap item; item.key = "token"; item.value = value;
+  call.data.push_back(item);
+  bool sent = false;
+  for (auto &client : this->active_clients()) {
+    if (client->sed_flush_ready()) sent |= client->send_homeassistant_action(call);
+  }
+  return sent;
+}
+void APIServer::sed_control(StringRef value) {
+  if (value == std::to_string(this->sed_token_)) this->sed_sleep_ack_ = true;
+  if (!this->sed_events_.empty()) {
+    const std::string ack = "event:" + std::to_string(this->sed_boot_) + ":" + std::to_string(this->sed_events_.front().sequence);
+    if (value == ack) { this->sed_events_.erase(this->sed_events_.begin()); this->sed_event_sent_ = 0; }
+  }
+}
+bool APIServer::sed_sleep_guard() {
+  const uint32_t now = millis();
+  if (!this->sed_sleep_pending_) {
+    this->sed_sleep_pending_ = true; this->sed_sleep_ack_ = false;
+    this->sed_sleep_started_ = now; this->sed_token_ = random_uint32(); this->sed_marker_sent_ = 0;
+  }
+  if (!this->sed_sleep_ack_ && now - this->sed_sleep_started_ < this->sed_sleep_budget_) return false;
+  if (!this->sed_sleep_ack_) ESP_LOGW("thread_sed_api", "Sleep delivery deadline expired; latest states will resync on wake");
+  this->sed_poll(false);
+  if (this->sed_fast_poll_) return false;
+  this->sed_sleep_finishing_ = true;
+  for (auto &client : this->active_clients()) client->on_fatal_error();
+  return true;
+}
+void APIServer::sed_wake() {
+  this->sed_sleep_pending_ = false; this->sed_sleep_ack_ = false; this->sed_sleep_finishing_ = false;
+  this->outgoing_conn_.wake();
+}
+uint32_t APIServer::sed_sleep_seconds() const {
+#ifdef USE_THREAD_SED_SLEEP
+  auto *sleep = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
+  if (sleep != nullptr) return sleep->get_sleep_duration().value_or(0) / 1000;
+#endif
+  return this->sed_expected_sleep_seconds_;
+}
+void APIServer::sed_poll(bool fast) {
+  auto *ot = sed_ot::global_openthread_component;
+  if (ot == nullptr || !ot->is_lock_initialized()) return;
+  auto lock = sed_ot::InstanceLock::try_acquire(0);
+  if (!lock) return;
+  auto *instance = lock.get_instance();
+  if (instance == nullptr || otThreadGetLinkMode(instance).mRxOnWhenIdle) return;
+  if (fast == this->sed_fast_poll_) return;
+  if (fast) {
+    this->sed_saved_poll_ = otLinkGetPollPeriod(instance);
+    // Only shorten polling, never turn SED into MED.
+    uint32_t interval = this->sed_saved_poll_;
+    if (interval == 0 || interval > THREAD_SED_FAST_POLL_MS) interval = THREAD_SED_FAST_POLL_MS;
+    if (otLinkSetPollPeriod(instance, interval) != OT_ERROR_NONE) return;
+  } else if (otLinkSetPollPeriod(instance, this->sed_saved_poll_) != OT_ERROR_NONE) return;
+  this->sed_fast_poll_ = fast;
+}
+void APIServer::sed_queue_event(uint32_t key, StringRef type) {
+  if (this->sed_boot_ == 0) this->sed_boot_ = random_uint32();
+  if (this->sed_events_.size() >= 32) {
+    ESP_LOGW("thread_sed_api", "Event queue full; newest event dropped"); return;
+  }
+  this->sed_events_.push_back({++this->sed_event_sequence_, key, std::string(type.c_str(), type.size())});
+  // A newly captured event invalidates an outstanding sleep marker.
+  if (this->sed_sleep_pending_) { this->sed_sleep_ack_ = false; this->sed_token_ = random_uint32(); this->sed_marker_sent_ = 0; }
+}
+void APIServer::sed_tick() {
+#ifdef USE_THREAD_SED_SLEEP
+  auto *sleep_check = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
+  if (sleep_check != nullptr && !sleep_check->is_pending() && !sleep_check->is_sleeping() && this->sed_sleep_pending_) this->sed_wake();
+#endif
+  if (this->sed_sleep_finishing_) { this->sed_poll(false); return; }
+  this->sed_poll(!this->sed_sleep_pending_ || !this->sed_sleep_ack_);
+  if (!this->sed_events_.empty() && (this->sed_event_sent_ == 0 || millis() - this->sed_event_sent_ >= 500)) {
+    const auto &event = this->sed_events_.front();
+    const std::string token = std::to_string(this->sed_boot_) + ":" + std::to_string(event.sequence) + ":" + std::to_string(event.key) + ":" + event.type;
+    if (this->sed_send("thread_sed.event", token)) this->sed_event_sent_ = millis();
+  }
+#ifdef USE_THREAD_SED_SLEEP
+  auto *sleep = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
+  if (sleep != nullptr && !sleep->is_pending() && this->sed_sleep_pending_) this->sed_wake();
+#endif
+  if (this->sed_sleep_pending_ && !this->sed_sleep_ack_ && this->sed_events_.empty() &&
+      (this->sed_marker_sent_ == 0 || millis() - this->sed_marker_sent_ >= 500)) {
+    if (this->sed_send("thread_sed.sleep", std::to_string(this->sed_token_))) this->sed_marker_sent_ = millis();
+  }
+}
+}

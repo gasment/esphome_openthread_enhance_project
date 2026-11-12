@@ -1,0 +1,25 @@
+{
+  "title": "Thread SED",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Thread SED / REED",
+        "description": "Keep the node awake while entering its Noise encryption key.",
+        "data": {
+          "host": "IPv6 address or hostname",
+          "port": "API port",
+          "noise_psk": "Noise encryption key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect. Keep the node awake and check IPv6 routing.",
+      "invalid_auth": "Invalid Noise key or device identity."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "invalid_discovery": "The discovery record is invalid.",
+      "reauth_successful": "Authentication updated."
+    }
+  }
+}
