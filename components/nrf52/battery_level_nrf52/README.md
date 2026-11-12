@@ -22,7 +22,7 @@ sensor:
 
 `adc` 可省略，默认 `pin: VDD`、单次读取、平均模式、倍率 1。输入支持 `VDD`、`VDDHDIV5`、`AIN0..AIN7` 及 nRF52 的合法模拟 GPIO 引脚。使用外部电池分压时配置 `voltage_multiplier`，同时按实际电池修改曲线和有效电压范围。
 
-ADC 使用内部参考、14 位分辨率、硬件 oversampling=8；VDDHDIV5 增益为 1/2，其余输入为 1/6。硬件通道在代码生成时分配，所有使用同一分配器的 ADC 输入合计最多 8 个。
+ADC 使用内部参考、14 位分辨率、硬件 oversampling=8；VDDHDIV5 增益为 1/2，其余输入为 1/6。硬件通道在代码生成时分配，通过标准 `zephyr,user` 节点声明，所有使用同一分配器的 ADC 输入合计最多 8 个；该声明不加载外部 ADC 组件。
 
 手动更新：
 

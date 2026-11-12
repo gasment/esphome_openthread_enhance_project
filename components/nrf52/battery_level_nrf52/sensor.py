@@ -5,7 +5,7 @@ import esphome.config_validation as cv
 from esphome.components import sensor
 from esphome import pins
 from esphome.components.nrf52.const import AIN_TO_GPIO, EXTRA_ADC
-from esphome.components.zephyr import zephyr_add_overlay, zephyr_add_prj_conf
+from esphome.components.zephyr import zephyr_add_overlay, zephyr_add_overlay_builder, zephyr_add_prj_conf
 from esphome.const import CONF_ANALOG, CONF_INPUT, CONF_NUMBER
 from esphome.core import CORE
 from esphome.const import CONF_ID
@@ -80,12 +80,19 @@ CONFIG_SCHEMA = cv.All(sensor.sensor_schema(
 }).extend(cv.polling_component_schema("never")), cv.only_on_nrf52, cv.only_with_framework("zephyr"), validate)
 
 
+def _overlay_io_channels():
+    # Zephyr infers an io-channels binding for this standard node. Arbitrary
+    # unbound nodes retain the DTS text but do not emit the required C macros.
+    entries = ", ".join(f"<&adc {i}>" for i in range(CORE.data["adc_channel_id"]))
+    return f"/ {{ zephyr,user {{ io-channels = {entries}; }}; }};"
+
+
 async def to_code(config):
     var = await sensor.new_sensor(config)
     await cg.register_component(var, config)
     adc = config["adc"]
-    # Coordinate hardware channel IDs with any independently configured ADC
-    # entities, but give this component its own DT node and sampling lifecycle.
+    # Coordinate hardware channel IDs with independently configured inputs.
+    # The shared DT list is hardware metadata, not an ADC entity dependency.
     channel_id = CORE.data.setdefault("adc_channel_id", 0)
     if channel_id >= 8:
         raise cv.Invalid("nRF52840 SAADC supports at most 8 configured channels")
@@ -96,14 +103,9 @@ async def to_code(config):
     elif pin not in EXTRA_ADC:
         raise cv.Invalid("Unsupported nRF52 ADC input")
     gain = "ADC_GAIN_1_2" if pin == "VDDHDIV5" else "ADC_GAIN_1_6"
-    label = f"battery_level_{config[CONF_ID]}"
     zephyr_add_prj_conf("ADC", True)
+    zephyr_add_overlay_builder(_overlay_io_channels)
     zephyr_add_overlay(f"""
-        / {{
-            {label}: {label.replace('_', '-')} {{
-                io-channels = <&adc {channel_id}>;
-            }};
-        }};
         &adc {{
             #address-cells = <1>;
             #size-cells = <0>;
@@ -118,7 +120,7 @@ async def to_code(config):
             }};
         }};
     """)
-    spec = cg.new_Pvariable(adc["adc_spec_id"], cg.RawExpression(f"ADC_DT_SPEC_GET(DT_NODELABEL({label}))"))
+    spec = cg.new_Pvariable(adc["adc_spec_id"], cg.RawExpression(f"ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), {channel_id})"))
     cg.add(var.set_adc_channel(spec))
     cg.add(var.set_adc_samples(adc["samples"]))
     cg.add(var.set_sampling_mode({"avg": 0, "min": 1, "max": 2}[adc["sampling_mode"]]))

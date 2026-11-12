@@ -145,3 +145,5 @@
 - 电压与电量共享更新时序，驱动错误和无效读数不污染累计，发布阶段保留重入保护，防止用户自动化同步回调形成递归。
 - 已迁移本地 light-bt-stair 的 sensor.yaml，保留 sys_vdd、battery_level 和名称，统一为原电压采样的 10s 周期。完整带注释 YAML diff 见 components/nrf52/battery_level_nrf52/README.md。
 - 不运行固件编译；新驱动接线与电压精度仍待上板验证。
+
+- 修复内置 ADC 的设备树宏生成：任意自建节点缺少 binding，改用 Zephyr 标准 zephyr,user io-channels 与按索引获取 adc_dt_spec；仍不依赖外部 adc 平台，用户 YAML 不变。
