@@ -109,6 +109,11 @@ bool SedUdpTransport::flush(const std::string &control, uint32_t ack_timeout, ui
   tx_flags_=schema_building_?2:0;
   tx_peer_=(tx_flags_&2)?schema_peer_:peer_;
   tx_peer_len_=(tx_flags_&2)?schema_peer_len_:peer_len_;
+  char target[socket::SOCKADDR_STR_LEN];
+  socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&tx_peer_),tx_peer_len_,target);
+  ESP_LOGD(TAG,"UDP group=%u target=[%s]:%u wake=%08x%08x",static_cast<unsigned>(tx_group_),target,
+      ntohs(reinterpret_cast<const sockaddr_in6 *>(&tx_peer_)->sin6_port),
+      static_cast<unsigned>(get32(boot_.data())),static_cast<unsigned>(get32(boot_.data()+4)));
   if(tx_flags_&2) ESP_LOGI(TAG,"Sending descriptors: group=%u bytes=%u fragments=%u",
       static_cast<unsigned>(tx_group_),static_cast<unsigned>(tx_.size()),
       static_cast<unsigned>((tx_.size()+CHUNK-1)/CHUNK));
@@ -199,10 +204,28 @@ void SedUdpTransport::receive_() {
     packet.resize(HEADER+CHUNK+16);
     sockaddr_storage from{}; socklen_t length=sizeof(from);
     const int count=socket_->recvfrom(packet.data(),packet.size(),reinterpret_cast<sockaddr *>(&from),&length);
-    if(count<0) break;
+    if(count<0) {
+      const int receive_error=errno;
+      if(receive_error!=EAGAIN && receive_error!=EWOULDBLOCK &&
+          (receive_error_logged_at_==0 || millis()-receive_error_logged_at_>=1000U)) {
+        receive_error_logged_at_=millis();
+        ESP_LOGW(TAG,"UDP receive socket error: errno=%d",receive_error);
+      }
+      break;
+    }
     if(count<int(HEADER) || memcmp(packet.data(),"TSD2",4)!=0) continue;
     auto *p=packet.data(); const uint8_t kind=p[4],flags=p[5];
-    if(kind<1 || kind>5 || flags&~3 || get16(p+30)!=1 || get16(p+28)!=0) continue;
+    if(kind==3) {
+      char source[socket::SOCKADDR_STR_LEN];
+      socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,source);
+      ESP_LOGD(TAG,"ACK datagram received: group=%u from=[%s]:%u bytes=%d pending_group=%u",
+          static_cast<unsigned>(get32(p+24)),source,ntohs(reinterpret_cast<const sockaddr_in6 *>(&from)->sin6_port),
+          count,static_cast<unsigned>(tx_group_));
+    }
+    if(kind<1 || kind>5 || flags&~3 || get16(p+30)!=1 || get16(p+28)!=0) {
+      if(kind==3) ESP_LOGW(TAG,"ACK rejected: invalid flags or fragment fields");
+      continue;
+    }
     if(kind==1) {
       char source[socket::SOCKADDR_STR_LEN];
       socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,source);
@@ -212,12 +235,14 @@ void SedUdpTransport::receive_() {
     const bool wildcard=std::all_of(p+6,p+12,[](uint8_t n){return n==0;});
     if(memcmp(p+6,mac_.data(),6)!=0 && !(kind==1 && wildcard)) {
       if(kind==1) ESP_LOGW(TAG,"Probe rejected: target MAC does not match this node");
+      if(kind==3) ESP_LOGW(TAG,"ACK rejected: target MAC does not match this node");
       continue;
     }
     size_t size=count-HEADER;
 #ifdef USE_THREAD_SED_UDP_ENCRYPTION
     if(!(flags&1) || size<16) {
       if(kind==1) ESP_LOGW(TAG,"Probe rejected: this node requires UDP encryption");
+      if(kind==3) ESP_LOGW(TAG,"ACK rejected: missing encryption/tag");
       continue;
     }
     size-=16;
@@ -225,14 +250,21 @@ void SedUdpTransport::receive_() {
 #ifdef USE_THREAD_SED_NRF52
     size_t decoded_size=0;
     if(psa_aead_decrypt(crypto_key_,PSA_ALG_GCM,p+12,12,p,HEADER,p+HEADER,size+16,
-        decoded.data(),decoded.size(),&decoded_size)!=PSA_SUCCESS || decoded_size!=size) continue;
+        decoded.data(),decoded.size(),&decoded_size)!=PSA_SUCCESS || decoded_size!=size) {
+      if(kind==3) ESP_LOGW(TAG,"ACK rejected: GCM authentication failed");
+      continue;
+    }
 #else
-    if(mbedtls_gcm_auth_decrypt(&crypto_,size,p+12,12,p,HEADER,p+HEADER+size,16,p+HEADER,decoded.data())!=0) continue;
+    if(mbedtls_gcm_auth_decrypt(&crypto_,size,p+12,12,p,HEADER,p+HEADER+size,16,p+HEADER,decoded.data())!=0) {
+      if(kind==3) ESP_LOGW(TAG,"ACK rejected: GCM authentication failed");
+      continue;
+    }
 #endif
     memcpy(p+HEADER,decoded.data(),size);
 #else
     if(flags&1) {
       if(kind==1) ESP_LOGW(TAG,"Probe rejected: this node does not enable UDP encryption");
+      if(kind==3) ESP_LOGW(TAG,"ACK rejected: unexpected encryption");
       continue;
     }
 #endif
@@ -251,8 +283,27 @@ void SedUdpTransport::receive_() {
     const auto *expected=reinterpret_cast<const sockaddr_in6 *>((kind==3 && !tx_.empty())?&tx_peer_:&peer_);
     const auto *sender=reinterpret_cast<const sockaddr_in6 *>(&from);
     if(!ready() || sender->sin6_port!=expected->sin6_port ||
-        memcmp(&sender->sin6_addr,&expected->sin6_addr,16)!=0) continue;
+        memcmp(&sender->sin6_addr,&expected->sin6_addr,16)!=0) {
+      if(kind==3) {
+        char wanted[socket::SOCKADDR_STR_LEN];
+        const auto &target=tx_.empty()?peer_:tx_peer_;
+        socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&target),tx_.empty()?peer_len_:tx_peer_len_,wanted);
+        ESP_LOGW(TAG,"ACK rejected: unexpected source; expected=[%s]:%u",wanted,ntohs(expected->sin6_port));
+      }
+      continue;
+    }
     const uint32_t group=get32(p+24);
+    if(kind==3) {
+      if(tx_.empty()) { ESP_LOGD(TAG,"ACK ignored: no group pending"); continue; }
+      if(group!=tx_group_) { ESP_LOGD(TAG,"ACK ignored: group=%u expected=%u",static_cast<unsigned>(group),static_cast<unsigned>(tx_group_)); continue; }
+      if(size!=8) { ESP_LOGW(TAG,"ACK rejected: payload size=%u expected=8",static_cast<unsigned>(size)); continue; }
+      if(memcmp(p+HEADER,boot_.data(),8)!=0) {
+        ESP_LOGW(TAG,"ACK rejected: wake ID mismatch, got=%08x%08x expected=%08x%08x",
+            static_cast<unsigned>(get32(p+HEADER)),static_cast<unsigned>(get32(p+HEADER+4)),
+            static_cast<unsigned>(get32(boot_.data())),static_cast<unsigned>(get32(boot_.data()+4)));
+        continue;
+      }
+    }
     if(kind==4) { request_schema(); continue; }
     if(kind==3 && !tx_.empty() && group==tx_group_ && size==8 && memcmp(p+HEADER,boot_.data(),8)==0) {
       ESP_LOGD(TAG,"UDP group=%u ACK after %u round(s), %u ms since last round",static_cast<unsigned>(group),

@@ -59,7 +59,7 @@ class SedUdpTransport {
   socklen_t tx_peer_len_{0}, paused_peer_len_{0}, requested_schema_peer_len_{0}, schema_peer_len_{0};
   uint16_t port_{0};
   bool network_connected_{false};
-  uint32_t socket_retry_at_{0};
+  uint32_t socket_retry_at_{0}, receive_error_logged_at_{0};
   ESPPreferenceObject preference_;
   SavedPeer saved_{};
   std::array<uint8_t,6> mac_{};

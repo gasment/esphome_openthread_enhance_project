@@ -38,6 +38,9 @@ class UdpListener(asyncio.DatagramProtocol):
 
     def connection_made(self,transport): self.transport=transport
 
+    def error_received(self,exc):
+        _LOGGER.warning('Thread SED UDP socket reported a delivery error: %s',exc)
+
     def encoder(self,session):
         previous=self.encoders.get(session.mac)
         if previous is None or previous.key!=session.udp_key:
@@ -48,6 +51,8 @@ class UdpListener(asyncio.DatagramProtocol):
         schema=bytes.fromhex(session.schema) if len(session.schema)==32 else bytes(16)
         group,packets=self.encoder(session).encode(kind,payload,group=group,schema=schema)
         for packet in packets: self.transport.sendto(packet,peer)
+        if kind==ACK:
+            _LOGGER.debug('Thread SED %s group=%s ACK submitted to [%s]:%s wake=%s',session.mac,group,peer[0],peer[1],payload.hex())
         return group
 
     def datagram_received(self,data,peer):
