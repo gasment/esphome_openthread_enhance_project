@@ -895,7 +895,9 @@ void ThreadSedTransporter::dns_service_(otError error, const otDnsServiceRespons
   info.mTxtData = txt; info.mTxtDataSize = sizeof(txt); info.mHostNameBuffer = host; info.mHostNameBufferSize = sizeof(host);
   if (!self->shutdown_ && error == OT_ERROR_NONE && otDnsServiceResponseGetServiceInfo(response, &info) == OT_ERROR_NONE &&
       !info.mTxtDataTruncated && info.mPort && !otIp6IsAddressUnspecified(&info.mHostAddress) &&
-      !otIp6IsAddressLinkLocal(&info.mHostAddress) && !otIp6IsAddressMulticast(&info.mHostAddress)) {
+      // Public OpenThread C API in Nordic SDK 2.9.2 has no link-local/multicast predicates.
+      !(info.mHostAddress.mFields.m8[0] == 0xfe && (info.mHostAddress.mFields.m8[1] & 0xc0) == 0x80) &&
+      info.mHostAddress.mFields.m8[0] != 0xff) {
     std::string id, version;
     otDnsTxtEntryIterator iterator; otDnsTxtEntry entry;
     otDnsInitTxtEntryIterator(&iterator, txt, info.mTxtDataSize);
