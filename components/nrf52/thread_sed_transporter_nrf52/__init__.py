@@ -1,13 +1,13 @@
 """Event-driven, explicitly selected Thread entity sends for nRF52/Zephyr."""
 import math
 import re
-import ipaddress
 
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, binary_sensor, text_sensor, event, openthread_nrf52
 from esphome.components import switch, number, select, button, text
+from esphome.components.zephyr import zephyr_add_prj_conf
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
 from esphome.core import CORE, Lambda
 from collections.abc import Mapping
@@ -33,16 +33,6 @@ def identifier(value):
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,32}", value):
         raise cv.Invalid("Expected 1..32 ASCII letters, digits, '_' or '-'")
     return value
-
-
-def multicast(value):
-    try:
-        address = ipaddress.IPv6Address(cv.string_strict(value))
-    except ValueError as err:
-        raise cv.Invalid(str(err)) from err
-    if not address.is_multicast or address.packed[1] != 0x13:
-        raise cv.Invalid("Use a transient realm-local multicast address, e.g. ff13::8000:8562")
-    return str(address)
 
 
 def delta(value):
@@ -101,10 +91,10 @@ def validate(config):
         if identity in ids:
             raise cv.Invalid(f"Duplicate wire entity id: {identity}")
         ids.add(identity)
-    if not 1 <= config["discovery"]["timeout"].total_milliseconds <= 10000:
-        raise cv.Invalid("discovery.timeout must be 1ms..10s")
-    if not 1000 <= config["heartbeat_interval"].total_milliseconds <= 15000:
-        raise cv.Invalid("heartbeat_interval must be 1s..15s (gateway lease is 30s)")
+    if not 1 <= config["backend"]["discovery_timeout"].total_milliseconds <= 10000:
+        raise cv.Invalid("backend.discovery_timeout must be 1ms..10s")
+    if not 1000 <= config["heartbeat_interval"].total_milliseconds <= 10000:
+        raise cv.Invalid("heartbeat_interval must be 1s..10s (SED control readiness window is 10s)")
     if len(config["name"].encode("utf-8")) > 96:
         raise cv.Invalid("Node name must fit 96 UTF-8 bytes")
     poll = config["active_poll_period"].total_milliseconds
@@ -119,12 +109,13 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.Required("node_id"): identifier,
     cv.Optional("name", default="SED node"): cv.string_strict,
     cv.Optional("manifest_revision"): cv.invalid("manifest_revision was removed; manifests are fingerprinted automatically"),
-    cv.Optional("discovery", default={}): cv.Schema({
-        cv.Optional("gateway_id"): identifier,
-        cv.Optional("multicast_address"): cv.invalid("Discovery is built in; remove multicast_address"),
-        cv.Optional("port"): cv.invalid("Discovery is built in; remove port"),
-        cv.Optional("timeout", default="1s"): cv.positive_time_period_milliseconds,
+    cv.Optional("discovery"): cv.invalid("v3 uses HA DNS-SD; remove discovery and optionally set backend.id"),
+    cv.Optional("gateway_id"): cv.invalid("v3 uses backend.id and manual HA admission"),
+    cv.Optional("backend", default={}): cv.Schema({
+        cv.Optional("id"): identifier,
+        cv.Optional("discovery_timeout", default="2s"): cv.positive_time_period_milliseconds,
     }),
+    cv.Optional("sleep_for", default="0s"): cv.All(cv.positive_time_period_seconds, cv.Range(min=cv.TimePeriodSeconds(seconds=0), max=cv.TimePeriodSeconds(seconds=604800))),
     cv.Optional("deep_sleep_id"): cv.use_id(cg.esphome_ns.namespace("deep_sleep_nrf52").class_("DeepSleepComponent", cg.Component)),
     cv.Optional("active_poll_period", default="100ms"): cv.All(cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriodMilliseconds(milliseconds=0xFFFFFFFF))),
     cv.Optional("acquisition_delay"): cv.invalid("Source components own acquisition; remove acquisition_delay and schedule acquisition in the source automation"),
@@ -151,6 +142,7 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
 
 
 async def to_code(config):
+    zephyr_add_prj_conf("OPENTHREAD_DNS_CLIENT", True)
     for flag in ("USE_ENTITY_DEVICE_CLASS", "USE_ENTITY_UNIT_OF_MEASUREMENT", "USE_ENTITY_ICON"):
         cg.add_define(flag)
     var = cg.new_Pvariable(config[CONF_ID])
@@ -162,8 +154,9 @@ async def to_code(config):
         sleep = await cg.get_variable(config["deep_sleep_id"])
         cg.add(var.set_deep_sleep(sleep))
     cg.add(var.set_node(config["node_id"], config["name"]))
-    d = config["discovery"]
-    cg.add(var.set_discovery(d.get("gateway_id", ""), d["timeout"]))
+    d = config["backend"]
+    cg.add(var.set_backend(d.get("id", ""), d["discovery_timeout"]))
+    cg.add(var.set_sleep_for(config["sleep_for"].total_seconds))
     cg.add(var.set_timing(config["timeout"], config["heartbeat_interval"]))
     ready = await cg.templatable(config["control_ready"], [], cg.bool_)
     if isinstance(config["control_ready"], bool):

@@ -1,6 +1,6 @@
 # OpenThread Gateway protocol v3
 
-本文件定义 HA 实现的协议，供后续四类 transporter 适配；不兼容 v1/v2。所有 UDP payload（含头）不得超过 **1232 bytes**。发现采用 DNS-SD `_esphome-tgw._udp.local.`，不使用 Thread realm-local 业务广播。
+本文件定义 HA 实现的协议，供 transporter 适配（两个 SED 已实现初版，REED 待迁移）；不兼容 v1/v2。所有 UDP payload（含头）不得超过 **1232 bytes**。发现采用 DNS-SD `_esphome-tgw._udp.local.`，不使用 Thread realm-local 业务广播。
 
 ## Wire framing / authentication
 
@@ -129,3 +129,5 @@ HA 解绑时先持久化 binding_id 对应撤销记录及旧认证密钥，再�
 ## Test vectors and reference
 
 `tests/test_protocol.py` 定义握手、分片、乱序、回滚及撤销测试。`tools/simulate_node.py` 是不依赖 HA 包的发送端参考实现。协议只提供本轮已实现行为；后续 C++ 适配如需改变 wire contract，应同时更新此文档和测试。
+
+LAN mDNS 公告域为 `.local.`；Thread 节点通过 BR DNS-SD Discovery Proxy 查询 `_esphome-tgw._udp.default.service.arpa.`，不是向 Thread 组播 `.local.`。SED 实现见 [迁移说明](SED_MIGRATION.md)。

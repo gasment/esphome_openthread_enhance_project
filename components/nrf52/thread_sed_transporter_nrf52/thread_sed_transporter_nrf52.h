@@ -1,5 +1,5 @@
 #pragma once
-#include "esphome/components/thread_entity_bridge_nrf52/transport_protocol.h"
+#include "esphome/components/thread_entity_bridge_nrf52/ha_protocol.h"
 #include "esphome/core/defines.h"
 
 #include <vector>
@@ -12,6 +12,7 @@
 #include "esphome/components/deep_sleep_nrf52/deep_sleep_nrf52.h"
 #endif
 #include "openthread/udp.h"
+#include "openthread/dns_client.h"
 #include "cJSON.h"
 #include "esphome/components/thread_entity_bridge_nrf52/entity_bridge.h"
 #ifdef USE_SWITCH
@@ -170,7 +171,8 @@ class ThreadSedTransporter : public Component {
   void set_node(const std::string &id, const std::string &name) {
     node_ = id; name_ = name;
   }
-  void set_discovery(const std::string &id, uint32_t timeout) {
+  void set_sleep_for(uint32_t seconds) { sleep_for_s_ = seconds; }
+  void set_backend(const std::string &id, uint32_t timeout) {
     expected_gateway_ = id; discovery_timeout_ = timeout;
   }
   void set_timing(uint32_t timeout, uint32_t heartbeat) { timeout_ms_ = timeout; heartbeat_ms_ = heartbeat;
@@ -218,7 +220,7 @@ class ThreadSedTransporter : public Component {
     uint32_t id{0}, ack_timeout{0};
     uint8_t ack_resend{0};
     std::vector<Snapshot> snapshots;
-    bool force{false};
+    bool force{false}, snapshot{false};
     uint64_t order{0};
   };
   struct Result { uint32_t id; bool notify_global; ResultCallback callback; };
@@ -246,12 +248,31 @@ class ThreadSedTransporter : public Component {
     std::function<cJSON *()> descriptor, read;
     std::function<bool(const cJSON *)> execute;
   };
-  struct Packet { otIp6Address peer; uint16_t port; size_t size; char data[1233]; };
-  thread_transport::Binding binding_;
+  struct Packet { bool internal{false}; otIp6Address peer; uint16_t port; size_t size; char data[1233]; };
+  thread_ha::Binding binding_;
   bool unbind_requested_{false};
   std::string context_, manifest_hash_;
   bool refresh_binding_();
-  bool process_binding_(const Packet &, cJSON *);
+  struct Endpoint { std::string id; otIp6Address address; uint16_t port; uint64_t expires; };
+  struct DnsQuery { ThreadSedTransporter *owner; uint32_t epoch; };
+  static void dns_browse_(otError, const otDnsBrowseResponse *, void *);
+  static void dns_service_(otError, const otDnsServiceResponse *, void *);
+  void process_dns_(const Packet &);
+  bool queue_packet_(Packet *);
+  void start_dns_();
+  void reset_session_(bool new_request = true);
+  void set_target_(const Packet &, const std::string &);
+  void rebase_reports_();
+  void queue_snapshot_();
+  bool prepare_sleep_();
+  bool sleep_announced_{false}, sleep_ack_{false};
+  uint32_t sleep_at_{0};
+  uint64_t now_ms_() const;
+  std::vector<Endpoint> endpoints_;
+  std::atomic<uint32_t> dns_pending_{0};
+  uint32_t dns_epoch_{0}, dns_at_{0}, sleep_for_s_{0};
+  std::string network_, request_nonce_;
+  bool session_ready_{false}, full_sync_pending_{true};
   std::string wire_payload_(const std::string &, uint16_t) const;
 
   struct CompletedCommand { uint32_t id; std::string response; };
@@ -261,9 +282,9 @@ class ThreadSedTransporter : public Component {
     std::string snapshot;
   };
   void confirm_(const std::vector<Commit> &commits, uint64_t order, uint64_t generation);
-  void request_full_sync_() { ++full_generation_; }
+  void request_full_sync_() { ++full_generation_; full_sync_pending_ = true; }
   struct PendingAck {
-    uint32_t id, started, attempt_at, timeout;
+    uint32_t id, seq, started, attempt_at, timeout;
     uint8_t resend_limit{0}, resends{0};
     bool recovered{false}, recovering{false};
     uint32_t recovery_at{0};
@@ -316,9 +337,8 @@ class ThreadSedTransporter : public Component {
   bool queue_initialized_{false};
   std::atomic<bool> shutdown_{false};
   std::atomic<uint32_t> drops_{0};
-  std::string node_, name_, session_, expected_gateway_, group_{"ff13::8000:8562"};
-  uint32_t  sequence_{0}, request_id_{0};
-  uint16_t discovery_port_{18512};
+  std::string node_, name_, session_, expected_gateway_;
+  uint32_t sequence_{0};
   uint32_t discovery_timeout_{1000}, timeout_ms_{5000}, heartbeat_ms_{10000};
   uint32_t started_{0}, query_at_{0}, manifest_at_{0}, heartbeat_at_{0};
   uint32_t last_gateway_reply_{0}, discovery_started_{0};

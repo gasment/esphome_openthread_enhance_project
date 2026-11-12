@@ -1,60 +1,8 @@
-# thread_sed_transporter_nrf52
+# thread_sed_transporter_nrf52 · HA v3
 
-> **协议 v2（破坏性更新）**：配置和接入逻辑以根目录 [更新日志与 YAML diff](../../../TRANSPORT_V2_CHANGELOG.md) 为准。
-> 下文原 v1 报文/旧发现配置及手工 revision 说明保留作历史参考，不适用于当前实现。
+SED 实体传输至 Home Assistant 自定义集成 `openthread_gateway`，BR 只负责标准 IPv6 路由与 DNS-SD Discovery Proxy。本版本与 BR 内的 v2 `thread_gateway` 不兼容。
 
-
-nRF52/Zephyr MTD 的事件驱动实体发送组件，配合 ESP32 `thread_gateway` 使用。
-依赖 `openthread_nrf52` 和自动加载的 `thread_entity_bridge_nrf52`，可选关联
-`deep_sleep_nrf52`。显式 external_components 列表需同时包含实体桥。
-
-实体负责采集、过滤和发布；本组件不调用源组件的 update，也不自动定时发送状态。
-采集异步完成或源端延迟过滤生效后，再调用发送 action。
-
-## Event 实体
-
-在 `events` 中登记 Event 实体，仍由自动化手动调用 `send`。同类型连续发送视为多次事件，
-不受 `force: false` 的变化过滤影响。每次调用立即冻结类型，ACK 重发沿用同一序号；
-不会因为网关重连或全量同步而自动发送上一次事件。
-
-```yaml
-event:
-  - platform: template
-    id: key_event
-    name: "KEY Action"
-    device_class: button
-    event_types: [single, hold]
-    on_event:
-      then:
-        - thread_sed_transporter_nrf52.send:
-            id: sed_transport
-            entity_id: key_event
-            ack:
-              timeout: 200ms
-              resend: 1
-            on_success:
-              - lambda: 'ESP_LOGI("KEY", "Event ACK, report=%u", report_id);'
-
-thread_sed_transporter_nrf52:
-  id: sed_transport
-  openthread_id: openthread_main
-  node_id: room_key
-  events: [key_event]
-```
-
-按键自动化调用 `event.trigger: {id: key_event, event_type: single}` 后，上述 on_event 会发送。
-也可直接 `send: {entity_id: key_event, entity_state: single}`，不必先触发本地 Event；
-在 on_event 中覆盖值的 lambda 为 `return std::string(event_type.c_str());`。
-一次 `entities` 可混合 Event 与其他实体。Event 必须声明 1～32 个非空、不重复的类型，
-每项不超过 64 个 UTF-8 字节，发送值必须属于该列表。未触发过的 Event 需显式提供 entity_state。
-结果回调提供 report_id，不继承 on_event 的 event_type。
-
-接收端必须同步更新 `thread_gateway` 和实体桥；网关支持 `capacity.events`（默认 16），
-批准后重启网关即可创建 HA 原生 event 实体。普通 text_sensor 的重复文本不具备这一语义。
-
-## 配置
-
-以下 ID 均引用其他组件中已经定义的实体和实例。
+依赖 `openthread_nrf52`，自动加载 `thread_entity_bridge_nrf52`；显式列出 external_components 时请包含二者。四类 transporter 中本轮迁移两个 SED；REED 仍使用 v2。
 
 ```yaml
 thread_sed_transporter_nrf52:
@@ -62,158 +10,62 @@ thread_sed_transporter_nrf52:
   openthread_id: openthread_main
   node_id: room_key
   name: Room Key
-  manifest_revision: 1
-  deep_sleep_id: sleep_control  # 可选
-  active_poll_period: 100ms
+  # backend 可整体省略：向发现的 HA 后端发送候选 HELLO，仍需在 HA 人工接入。
+  backend:
+    id: ha_main  # 可选，限制目标 HA 后端 ID；指定后也不绕过人工确认
+    # discovery_timeout: 2s
+  deep_sleep_id: sleep_control  # 保留原 deep_sleep_nrf52 实例，自动读取其本次休眠时长
+  control_ready: !lambda return id(keep_awake).state;
+  heartbeat_interval: 10s
   sensors:
     - id: temperature
-      delta: 0.5  # 可选，默认 0：任意实际变化
-    - battery_voltage
-  binary_sensors:
-    - key_state
+      delta: 0.5
+  binary_sensors: [door_state]
   text_sensors:
-    - id: event_text
-      max_length: 32  # UTF-8 字节，上限 128
+    - id: thread_identity
+      max_length: 42
+  events: [key_event]
 ```
 
-清单共允许 1..16 个实体。也支持 switches、numbers、selects、buttons、text_inputs，
-沿用源实体元数据和能力；button 没有状态，不能作为发送 action 的 entity_id。
-控制实体仍受网关现有规则约束：SED 控制实体仅供 Web 控制。
+以上 ID 引用源组件，不定义新传感器。`node_id`/实体 ID 为 1～32 ASCII 字符，实体总数仍为 1～16。支持 sensors、binary_sensors、text_sensors、events、switches、numbers、selects、buttons、text_inputs；button 没有状态，不能作为 send 的目标。
 
-discovery 默认多播 ff13::8000:8562、端口 18512、单次发现等待 1s；
-可在 discovery 下指定 gateway_id。timeout 默认 5s，是每个任务发送前等待目标和清单
-就绪的预算，不是包含排队和 ACK 恢复的总时限。
+## 发现与绑定
 
-## 手动发送
+HA 在 LAN 公告 `_esphome-tgw._udp.local.`；节点通过 Thread 内 BR 的 DNS-SD 代理查询 `_esphome-tgw._udp.default.service.arpa.`，解析 TXT `v=3`/`id` 与 SRV/AAAA。查询使用 SRP 自动发现的 BR 地址、DNS 端口 53。BR 必须启用 SRP 和 Discovery Proxy，HA 需有可从 Thread OMR 访问的 IPv6 地址、双向 UDP 路由和防火墙放行。
 
-统一使用 `thread_sed_transporter_nrf52.send`。entity_id 接收一个 ID 或 ID 列表，
-只能引用本实例登记的有状态实体或 Event，列表不允许重复或为空。
+未绑定节点最多缓存 8 个后端端点，向所有匹配后端发送未绑定 HELLO。HA 端选择接入后，节点先持久保存密钥再确认。绑定保留于 ESP32 NVS `thread_ha_v3` / nRF52 OT settings `0x8003`，不会使用旧 v2 绑定。身份使用工厂 EUI64；更换 Thread 网络不会清除有效 HA 绑定。
+
+首次接入建议保持节点唤醒（例如 `keep_awake`），在 HA 配置选项中确认；已有绑定的正常唤醒不重复接入。System ON 唤醒不重建会话、不写启动计数；实际重启先提交递增计数，再握手。只有手动解绑或收到认证撤销才删除绑定。设置不同 backend.id 前应先解绑。
+
+## 上报与控制
+
+源组件负责采集与发布，本组件不调用它们的 update。原有 send/entity_state/entities/force/on_complete 等动作保留：
 
 ```yaml
 - thread_sed_transporter_nrf52.send:
     id: sed_transport
-    entity_id: key_state
-    force: true
+    entity_id: [temperature, door_state]
     ack:
-      timeout: 500ms
+      timeout: 2s
       resend: 2
     on_success:
-      - logger.log: "本次事件已收到网关 ACK"
-      - deep_sleep_nrf52.enter: sleep_control
-    on_fail:
-      - logger.log: "本次事件发送失败"
-
-- thread_sed_transporter_nrf52.send:
-    id: sed_transport
-    entity_id: [temperature, battery_voltage, event_text]
-    force: false
+      - logger.log: "HA 已确认本轮报告"
 ```
 
-- force 默认 false，可写 lambda。false 对数值按 delta 过滤，对布尔、文本和控制实体
-  按值变化过滤；true 绕过变化过滤，但仍拒绝无效值。
-- 调用时冻结指定实体的当前值；排队、发现和重试均不重新采样。
-  过滤在首次发送前对这份快照执行，比较当时最新的已确认基线。
-- 首次发送某实体，以及网关重新同步后的首次发送该实体，会发送其有效快照。
-  每个实体分别维护同步状态；发送 A 不会让尚未同步的 B 被当作已同步。
-  清单仍包含全部登记实体，但状态包仅包含本次 action 选择的实体。
-- 不再维护周期全量计数。需要定期全量时，在自己的定时或唤醒自动化中显式列出 ID 并设置 force: true。
-- 批量中任一实体当前值无效，会拒绝整批并回调失败，避免把部分事件误报为整批成功。
-  所有指定值均未变化时，没有 ACK 的请求不发状态包、按过滤成功结束；
-  配置 ACK 的请求发送 values={} 空轮次以取得通信确认。
-- 重复值如需作为新事件发送，可使用 force: true；这会产生新的 report_id/seq。
-  网关仍按实体状态处理，相同状态不保证产生新的 HA 状态变化事件。
+send 调用时冻结数据，delta/变化过滤以 HA ACK 确认的基线为准。v3 所有报告均等待整轮 ACK；省略 ack 时使用 2 秒、重发 2 次，原全局 on_report_success/on_report_fail 仍只对显式配置 ack 的任务触发，动作级 on_success/on_fail 在终态触发。on_complete 仍表示本地提交完成，不表示 HA 已确认。
 
-## 直接指定本次发送值
+事件每次显式 send 是一个新事件，重试使用相同报告 ID/seq 和冻结值。HA 请求全量同步时只读取普通状态，排除所有历史 Event。自动全量状态同步会额外调用组件级 on_complete；需要区分业务发送结果的自动化应使用 send 自己的 on_success/on_fail。
 
-单实体可使用 `entity_state`，省去先发布本地状态的步骤：
+清单使用原始 JSON SHA-256，512-byte 原始块 Base64 分片。所有业务使用 OTG3/HMAC-SHA256，单个数据报最多 1232 bytes。初次密钥邀请未加密，依赖可信 LAN/Thread；后续 HMAC 提供认证，不加密内容。
 
-```yaml
-- thread_sed_transporter_nrf52.send:
-    id: sed_transport
-    entity_id: event_text
-    entity_state: "single"
-    force: true
-    ack:
-      timeout: 500ms
-      resend: 2
-```
+SED 控制要求 `control_ready: true`，心跳范围 1～10 秒；HA 不排队离线控制。命令在当前会话内去重，满 32 个回执后协商新上下文，避免淘汰旧回执后重复执行按钮。控制成功表示源组件接受调用，实际状态由后续上报确认。
 
-批量发送使用 `entities`，允许混合覆盖值和源实体当前状态：
+## 恢复与休眠
 
-```yaml
-- thread_sed_transporter_nrf52.send:
-    id: sed_transport
-    entities:
-      - entity_id: event_text
-        entity_state: !lambda 'return std::string("double");'
-      - entity_id: temperature
-        entity_state: 23.5
-      - entity_id: key_state
-        entity_state: true
-      - entity_id: battery_voltage  # 没有覆盖值，读取当前状态
-    force: true
-    ack:
-      timeout: 500ms
-      resend: 2
-    on_success:
-      - logger.log: "批量事件已收到 ACK"
-```
+`thread_sed_transporter_nrf52.discovery: sed_transport` 重新发现端点并重建会话，不清除绑定；`thread_sed_transporter_nrf52.unbind: sed_transport` 持久撤销本地绑定，后续重新人工接入。HA 中仍有旧绑定时需同步移除。
 
-顶层 `entity_id` 与 `entities` 互斥，顶层 `entity_state` 只能搭配一个实体。
-覆盖值支持常量及 lambda，按登记实体类型确定为数值、布尔或字符串，不会隐式把字符串转换成数值。
-所有实体仍须在本发送器登记，且同一批次不可重复。覆盖值不要求源实体已经发布状态，
-但混合批次中未覆盖的实体仍须有有效当前值；任一无效项会拒绝整批。
-数值必须有限，文本遵守登记的 UTF-8 `max_length`，动态无效值通过原有失败回调报告。
+nRF52 使用 deep_sleep_id 在睡前发送 sleeping/sleep_for_s 公告，读取实际休眠时长（含 enter 的覆盖值），最长等 ACK 2 秒后允许休眠；不无限阻塞。ESP32 在 shutdown 中尽力发送公告，使用可选 sleep_for。sleep_for 最多 7 天，不能替代真正的休眠配置。未声明睡眠或仅使用 GPIO 无限期休眠时，HA 使用默认离线宽限。
 
-覆盖只影响发送快照，不调用源实体的 `publish_state`，不触发其 `on_value`、过滤器或硬件控制。
-lambda 在 action 执行时求值一次，排队和重试保持同一快照。
-`force`、ACK、回调继续作用于整个批次。成功提交的覆盖值也会更新发送基线，
-下一次直接读取本地旧状态时会与此基线比较；重复发送同一事件请使用 `force: true`。
+重传在同一上下文内幂等。HA 重启/切换上下文后，未确认报告保留冻结值并重新编号；HA 若在事件已执行后、ACK 丢失且事件去重状态丢失时重启，无法保证跨故障“恰好一次”。
 
-## ACK 与结果回调
-
-ack、on_success、on_fail 均属于当前 action，互不共享重试预算。
-ack.timeout 默认 2s，范围 1ms..60s；resend 默认 0，范围 0..10。
-配置 ack 后，成功表示网关已确认该轮全部分包；不是 HA 送达或物理动作完成确认。
-省略 ack 时，on_success 只表示本地发送成功或全部值被过滤，不能证明远端收到。
-
-action 立即返回；最多接受 8 个未完成任务。FIFO 执行首次发送，前一个任务等待 ACK 时
-可处理下一个任务。队列满会报告失败。每个请求最多一次最终回调；回调参数为
-uint32_t report_id，不继承调用位置的临时参数。后续步骤需要等待确认时写在 on_success 中。
-
-有 ACK 时仅在确认成功后更新对应实体的冻结基线，失败保留旧基线；
-没有 ACK 时以每页本地发送成功为更新边界。force 发送也会更新基线。
-较旧报告的迟到 ACK 不会回退较新基线，重新同步前的 ACK 不会建立新的同步基线。
-
-保留组件级 on_report_success/on_report_fail（仅通知启用 ACK 的请求），以及
-on_complete(success, sent, unchanged, invalid, errors)（本地发送阶段结束，尚未确认远端收到）。
-队列拒绝的请求没有本地发送阶段，因此不触发 on_complete。
-
-ACK 耗尽后每份冻结报告最多进行一次有界重新发现，恢复目标后重发相同字节并重新执行一轮
-ACK 预算。通信预算包含初始 timeout、两轮 ack.timeout * (resend + 1) 和恢复 timeout，
-另有排队及调度时间。保留手动 thread_sed_transporter_nrf52.discovery 动作。
-
-## System ON 与协议
-
-沿用 JSON v1、node_type: sed、清单、分包和 report_ack，与现有 ESP32 网关互通。
-单包最大 1232 字节，最多 16 页。接收回调只复制和排队，解析、实体控制和自动化在主线程运行。
-
-System ON 保留 RAM 中的会话、socket、网关 TTL 和基线；冷启动重新同步。
-TTL 使用 Zephyr 64 位单调时间，包含休眠时间；不写 flash 模拟保留状态。
-
-配置 deep_sleep_id 后，sleep guard 覆盖任务队列、ACK/恢复、接收队列、发现以及结果自动化。
-enter 请求会等待任务完成或最终失败。control_ready 默认 false；设为 true/lambda 返回 true
-时继续服务控制并保持唤醒。空闲不关闭 Thread 和 UDP，System ON 不调用 shutdown。
-
-通信时临时缩短 SED poll 至 active_poll_period（默认 100ms），空闲恢复 OpenThread 的配置值，
-并等恢复成功后才放行休眠。0ms 禁用；MED 维持连续接收。
-采集及源端过滤等待期间，仍需由调用方保持唤醒。
-
-## 迁移与验证
-
-旧 report 和 report_independently 动作已合并为 send：分别显式列出目标 ID，
-原独立强制上报使用 entity_id: 原sensor_id、force: true。
-full_report_every 已移除并提供配置错误提示；source_components 和 acquisition_delay 仍不支持。
-
-使用 ESPHome Python 环境运行 `python tools/validate_sed_send.py`，仅验证配置边界和内存代码生成，
-不编译固件。队列并发、ACK 丢失恢复、休眠时序及功耗仍需设备联调验证。
+验证范围：两个平台最小配置通过 ESPHome 2026.10.2 的 config 验证；C++ 仅语法解析与 API 核对，未编译固件、未上板联调。详见 [SED 迁移说明](../../../openthread_gateway/SED_MIGRATION.md)。

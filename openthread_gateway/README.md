@@ -2,7 +2,7 @@
 
 业务后端直接运行在 HA，节点绑定 HA 的稳定逻辑 ID，BR 仅提供 IPv6 路由和标准服务发现。不依赖 ESPHome Native API、BR 上的实体占位、容量预分配或应用实体后的 BR 重启。
 
-**这是 v3 破坏性协议的 HA 端实现。当前仓库四类 transporter 仍是 v2，本轮未修改它们，不能直接对接本集成。** 节点适配应以 [PROTOCOL.md](PROTOCOL.md) 为准。现有 BR 上的 v2 `thread_gateway` 不会自动迁入；先保留现网，待节点端适配和实测完成后再切换。
+**这是 v3 破坏性协议的 HA 端实现。ESP32 和 nRF52 两个 SED transporter 已增加 v3 适配，详见 [SED 迁移说明](SED_MIGRATION.md)；两个 REED transporter 仍为 v2，不能直接对接本集成。** 节点适配应以 [PROTOCOL.md](PROTOCOL.md) 为准。现有 BR 上的 v2 `thread_gateway` 不会自动迁入；先保留现网，待节点端适配和实测完成后再切换。
 
 ## 安装
 
@@ -110,6 +110,6 @@ python openthread_gateway/tools/simulate_node.py --host <HA的IPv6地址> --back
 
 随后在 HA 配置选项中接入“Protocol demo”。模拟器保存自己的绑定信息，可发送数值/二进制状态，并接受 switch 控制。它不替代节点固件适配，不会访问或修改 BR。
 
-本轮未编译 ESPHome 固件、未刷机。待完成：四类 transporter v3 适配、真实 HA 加载与 UI 联调、Thread DNS-SD 查询、OMR 路由和多 BR 故障切换、长休眠及断电恢复实测。
+本轮未编译 ESPHome 固件、未刷机。待完成：两个 REED transporter v3 适配、真实 HA 加载与 UI 联调、Thread DNS-SD 查询、OMR 路由和多 BR 故障切换、长休眠及断电恢复实测。
 
 实现参考：[HA 实体生命周期](https://contributors.home-assistant.io/core/entities/lifecycle/)、[实体注册表](https://contributors.home-assistant.io/core/integrations/entity-registry/)、[配置条目](https://contributors.home-assistant.io/core/integrations/config-entries/)。

@@ -43,7 +43,7 @@ python -m unittest discover -s openthread_gateway/tests -v
 
 工作流在项目根目录运行，Python 测试不依赖 ESPHome 编译环境。测试与模拟器也从 `custom_components/openthread_gateway` 加载纯协议模块，不导入集成入口。运行时文件全部位于集成目录，测试、模拟工具和文档不会复制进 HA。
 
-本轮未在真实 HA 中加载，也未执行 GitHub 上的 HACS / hassfest 校验；工作流需推送后运行。没有编译 ESPHome 固件。现有四类 transporter 仍需按 PROTOCOL.md 适配 v3 后才能接入。
+本轮未在真实 HA 中加载，也未执行 GitHub 上的 HACS / hassfest 校验；工作流需推送后运行。没有编译 ESPHome 固件。两个 SED transporter 已适配 v3、待用户编译上板；两个 REED transporter 仍需按 PROTOCOL.md 迁移。
 
 ## 默认目录与图标
 

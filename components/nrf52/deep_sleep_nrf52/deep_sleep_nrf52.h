@@ -34,6 +34,7 @@ class DeepSleepComponent : public Component {
   float get_setup_priority() const override { return setup_priority::LATE; }
   void set_run_duration(uint32_t ms) { run_duration_ = ms; }
   void set_sleep_duration(uint32_t ms) { sleep_duration_ = ms; }
+  optional<uint32_t> get_sleep_duration() const { return sleep_duration_; }
   void set_prepare_timeout(uint32_t ms) { prepare_timeout_ = ms; }
   void set_wakeup_mode(WakeupMode mode) { wakeup_mode_ = mode; }
   void set_peripheral_auto_mgr(bool enabled) { peripheral_mgr_.set_enabled(enabled); }

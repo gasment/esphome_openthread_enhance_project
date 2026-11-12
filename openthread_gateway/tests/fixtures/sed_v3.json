@@ -1,0 +1,21 @@
+{
+  "secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "state": {
+    "wire": "OTG3 996102eece62a215a4171a68477607e8557b0d2edcf78e3d518f63689ed6dd23\n{\"v\":3,\"type\":\"state\",\"device\":\"0123456789abcdef\",\"session\":\"1111111111111111\",\"backend_id\":\"ha_main\",\"binding_id\":\"22222222222222222222222222222222\",\"ctx\":\"3333333333333333\",\"manifest_hash\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"seq\":42,\"report_id\":7,\"part\":0,\"parts\":1,\"snapshot\":false,\"values\":{\"temperature\":1.25e-05,\"key_event\":\"single\"}}"
+  },
+  "hello": "OTG3 -\n{\"v\":3,\"type\":\"hello\",\"device\":\"0123456789abcdef\",\"session\":\"1111111111111111\",\"node\":\"door\",\"name\":\"Door\",\"network\":\"2222222222222222\",\"node_type\":\"sed\",\"boot\":1,\"generation\":0,\"request_id\":\"3333333333333333\"}",
+  "manifest": {
+    "document": "{\"name\":\"门磁\",\"entities\":[{\"id\":\"door\",\"type\":\"binary\",\"name\":\"Door\",\"capabilities\":{}}]}",
+    "sha256": "310073d9c459ac0f2e606100de7ea1abf1d142f761d0a09ea721c5937e83a8dc",
+    "chunks": [
+      "eyJuYW1lIjoi6Zeo5w==",
+      "o4EiLCJlbnRpdGllcw==",
+      "IjpbeyJpZCI6ImRvbw==",
+      "ciIsInR5cGUiOiJiaQ==",
+      "bmFyeSIsIm5hbWUiOg==",
+      "IkRvb3IiLCJjYXBhYg==",
+      "aWxpdGllcyI6e319XQ==",
+      "fQ=="
+    ]
+  }
+}
