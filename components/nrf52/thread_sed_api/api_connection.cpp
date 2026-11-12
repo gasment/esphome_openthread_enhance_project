@@ -174,8 +174,12 @@ void APIConnection::start() {
     return;
   }
   // Initialize client name with peername (IP address) until Hello message provides actual name
-  char peername[socket::SOCKADDR_STR_LEN];
-  this->helper_->set_client_name(this->helper_->get_peername_to(peername), strlen(peername));
+  // Fill the buffer before measuring it: function argument evaluation order
+  // must not allow strlen() to read an uninitialized stack buffer.
+  char peername[socket::SOCKADDR_STR_LEN]{};
+  this->helper_->get_peername_to(peername);
+  this->helper_->set_client_name(peername, strlen(peername));
+  ESP_LOGD(TAG, "Transport initialized for %s", peername);
 }
 
 APIConnection::~APIConnection() {
