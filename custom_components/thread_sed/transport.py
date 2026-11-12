@@ -107,6 +107,8 @@ class ReverseListener:
             session = self.sessions.get(mac)
             if session is None or session.connecting or session.online:
                 return
+            if session.entry.data.get('transport','tcp')=='udp':
+                return
             expected_mode = 'noise' if session.entry.data.get('noise_psk') else 'none'
             if mode != expected_mode:
                 raise ValueError('Transport does not match configured encryption')

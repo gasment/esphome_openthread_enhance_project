@@ -1,52 +1,50 @@
-# Thread SED protocol v1
+# Thread SED UDP v2
 
-Transport is ESPHome native TCP/Protobuf with optional Noise NNpsk0. The fork has an independent C++ namespace and compile guards; the official firmware `api` component is not loaded. Zeroconf/SRP service: `_thread-sed._tcp`, TXT `v=1`, `name`, `mac`, `sleep`, `encryption=none|noise`. Node server defaults to TCP 6053; HA reverse listener uses TCP 6064.
+本协议复用 ESPHome Protobuf 的实体描述、状态和命令**编码**，不使用 TCP 流、Hello/Noise 原生会话握手或 Subscribe 往返。正常批次是 UDP DATA → UDP ACK；首次接入或缺少描述时增加按需描述交换。
 
-When encryption is enabled, a reverse connection starts with the native unencrypted Noise server hello. Its MAC is used only to locate a configured key. All native messages and side effects follow successful Noise verification. The HA 2026.11 listener peeks at the bounded native server hello without consuming it, then hands the original nonblocking socket to APIClient.start_connection_from_socket() and finish_connection(). The native client performs Noise authentication directly; there is no loopback relay. A key-authenticated Hello with client_info `Thread SED` lets the node remember the real peer address, including IPv6 scope, for future dial-back.
+## 报文头
 
-Extensions reuse encrypted native messages, avoiding protobuf registry modifications:
+所有多字节整数为网络字节序，固定头长 48 字节：
 
-| Direction | Native message | Contents |
+|偏移|长度|内容|
 |---|---|---|
-| Node → HA | HomeassistantActionRequest | `thread_sed.session`, data `schema`, `sleep`, `sleep_seconds` |
-| Node → HA | HomeassistantActionRequest | `thread_sed.event`, data `token=boot:seq:key:event_type` |
-| Node → HA | HomeassistantActionRequest | `thread_sed.sleep`, data `token=random_u32` |
-| HA → Node | HomeAssistantStateResponse | entity_id `thread_sed.control`, state = sleep token or `event:boot:seq` |
+|0|4|magic=TSD2|
+|4|1|kind：1 PROBE / 2 DATA / 3 ACK / 4 SCHEMA / 5 COMMAND / 6 SLEEP / 7 HEARTBEAT|
+|5|1|flags：bit0 AES-GCM，bit1 完整实体描述组|
+|6|6|节点 MAC，PROBE 可用全零查询|
+|12|8|发送者随机传输标识；节点每次 System ON 唤醒更新|
+|20|4|发送者报文序列号，组成 GCM nonce|
+|24|4|业务组号|
+|28|2|分片编号，从 0 开始|
+|30|2|总分片数|
+|32|16|用户配置、已加载组件源码及 ESPHome 版本的指纹，控制报文可为零|
 
-These are internal control messages, not arbitrary HA service calls. HA ignores unrecognized service names. Application ACK follows state processing and storage, not TCP delivery alone. Events remain at the head of a 32-item RAM queue until ACK, with 500ms retry. HA deduplicates the latest boot's sequence; queued events are not durable on the device. Ordinary sensor updates use native subscription snapshots on every reconnection.
+DATA 负载由多个 [uint16 message_type, uint16 length, protobuf bytes] 组成。单组最多 32768 字节、最多 43 片，每片负载最多 768 字节。节点按循环逐片发送并处理 EAGAIN；完整一轮的最后一片发出后开始等待 `ack_timeout`，未确认时最多额外重发 `ack_resend` 轮（默认 500ms、2）。业务组号、控制标记和已序列化数据保持不变；每轮重新分配报文序列号。auto 的策略配置在组件级，manual 配置在每个 send action，回调也按此分层。分片发出停滞另有 5 秒内部保护；描述同步使用独立内部策略，不替代业务的 ACK 策略。接收端限制并发组数量和存活时间，拒绝越界或相互冲突的分片。
 
-Before sending a sleep marker the native initial-state iterator and deferred batch must be empty, and the event queue acknowledged. The guard allows sleep after ACK or the bounded delivery deadline. The node intentionally closes TCP before sleeping and dials immediately after wake. Thread mode is unchanged; only data polling is accelerated during the awake window.
+ACK 组号对应 DATA/COMMAND，负载是被确认报文发送者的 8 字节随机标识。节点同时校验 MAC、选定 HA 地址/端口、组号和标识，防止旧唤醒的 ACK 误完成新批次。重传同一完整组不会重复发布事件。
 
-Schema cache key combines the configuration fingerprint, firmware compilation time, and ESPHome version. A complete ListEntities response atomically replaces the cache, after which HA reconciles platform entities. Old UDP discovery, binding credentials, manifest revisions, control framing and entity bridge formats are not accepted.
+## 实体描述与接入
 
-## Plaintext mode
+节点发布 _thread-sed._udp，端口默认 6064；TXT 包含 mac/name/transport/encryption/sleep。用户确认接入时 HA 发 PROBE，节点回复带 DESCRIPTORS 标记的 DATA，其中有 DeviceInfoResponse、thread_sed.session 元数据、实体描述及 ListEntitiesDoneResponse。HA 校验 MAC 后保存条目和描述。
 
-Omitting encryption selects the native plaintext protobuf framing and does not compile the Noise component. The HA client uses noise_psk=None; the onboarding key is optional. Forward TCP uses unmodified native plaintext Hello.
+节点保存收到 PROBE 的 IPv6 地址和 UDP 端口，重启后可直接使用。HA 定期维护 PROBE 携带已缓存指纹，匹配时刷新端点并回复轻量 HEARTBEAT，不触发描述同步。HA 收到未知指纹的业务时请求 SCHEMA，暂存业务；节点暂停本组交付，优先同步描述，再恢复原组确认。未接入的 MAC 不由 HA 监听器自动创建实体。
 
-For reverse TCP the device first writes exactly 24 bytes: ASCII `TSED1 ` + the 17-byte colon-separated MAC + LF. This prefix is routing metadata, not authentication. The HA listener peeks to select an existing config entry, rejects a transport/configuration mismatch, then consumes exactly the prefix before passing the socket to the native client. Following native frames are never consumed by the router. Encrypted entries never silently downgrade to plaintext.
+## 状态、事件与控制
 
-The firmware accepts dial-back target Hello in explicitly configured plaintext mode as well as authenticated Noise mode. Entity state, schema, event ACK and sleep ACK messages are identical above the transport layer.
+manual 快照继续用原实体遍历器和选择 ID；事件保留原 RAM 队列、截止序列和按实体选择规则。批次结束记录只用于组边界；收到组 ACK 后触发原 send action 成功分支。auto 事件与状态共用批次 ACK，仍可有多个连续确认批次。失败保留未确认事件，等待后续业务触发或唤醒再发，不在回调后无限重启重试。
 
-## Ready handshake and manual batches
+HA 在内存中处理状态和事件后立即发 ACK，后台合并写缓存。ACK 不表示磁盘持久化完成。组重复缓存与按节点事件 boot/entity/sequence 去重共同抑制普通重传；重启、掉电和有界去重缓存之外不承诺 exactly-once。
 
-After schema processing and registering all subscriptions, HA responds to the reserved control subscription with HomeAssistantStateResponse `ready`. The node records this on that exact APIConnection. An accepted native Hello alone is not ready. is_ready also requires the initial iterator and deferred state queue to be idle and no send already pending.
+COMMAND 是单片，负载为目标节点当前唤醒标识（8 字节）加一条 Protobuf 命令。节点校验唤醒标识、HA 端点和命令类型，最近 16 个命令组只执行一次并重复 ACK。HA 200ms 未确认时重传，最多 4 次，超时记录告警。原生实体状态变化通过后续 DATA 回报。
 
-send_mode defaults to auto. In manual mode, native SubscribeStates and later entity publishes do not upload state; the send action explicitly runs the existing initial-state iterator once. Event generation is always captured into the bounded RAM queue. A send includes only events with sequence <= the sequence recorded at its start. Those use HomeassistantActionRequest service `thread_sed.batch_event` with the existing event token, without individual ACKs.
+SLEEP 是单向通知，负载 uint32 预期休眠秒数；0 表示无确定计时唤醒。它不要求回复，不阻挡业务完成后的休眠。通知丢失时 HA 会按最近活动窗口及缓存休眠信息调整可用性。旧唤醒的状态/心跳/休眠通知不会覆盖已观察到的新唤醒；HA 保留最近 64 个已结束唤醒标识。常醒节点连续 90 秒无业务或维护心跳变为离线。
 
-After the state iterator/deferred batch drains and included events are written, the node sends `thread_sed.batch`, data token `random_u32:sequence`. HA serializes service-control processing, handles earlier events, saves its state/schema/dedup cache, then replies on thread_sed.control with `batch:<token>`. This is one application ACK for the batch, in addition to TCP's ordinary reliability. The node accepts it only from the selected connection after its marker was written; stale IDs or other connections cannot complete the action. No application packet retransmission layer is added.
+## 可选加密
 
-Completion invokes the originating action's on_success/on_error branch, whose continuation preserves YAML order even when the branch contains asynchronous actions. A stopped script cancels its wait without later callbacks; already transmitted bytes cannot be recalled. Disconnect, timeout or native send failure retain unconfirmed events. Only one pending send is allowed. The automatic sleep guard waits for a pending send, but manual mode sleep itself does not implicitly transmit unsent states/events.
+无 key 时为明文。配置 encryption.key 后使用 AES-256-GCM，nonce 为头部随机标识 8 字节 + 报文序列号 4 字节，AAD 为完整 48 字节头，16 字节 tag 附于密文末尾。随机标识使用系统加密随机源，序列号回绕时重新生成。重传重新分配报文序列号；组号保持不变。HA 与节点分别维护独立的随机标识/计数。
 
-## Entity selection within a batch
+nRF52 使用当前 NCS 的 PSA Crypto GCM，ESP-IDF 使用 mbedTLS GCM。明文模式不提供认证；加密模式验证 GCM tag 和模式一致性。
 
-The send action accepts entity_id as either one ESPHome entity ID or a nonempty list of IDs, resolved to EntityBase pointers at code generation. The native InitialStateIterator still advances over registered entities, but skips serialization for unselected pointers. Pointer identity avoids confusing equal object-id hashes in different entity objects. Omitting entity_id retains a full state iteration. Internal and unsupported entities are rejected rather than silently acknowledging a missing state.
+## TCP 兼容
 
-The batch owns its selection for the iterator lifetime. Selected queued events share the same batch ACK; removal requires both sequence <= the starting cutoff and membership in the selection. Other events remain queued. HA deduplication is now per boot and event-entity key, retaining the legacy global watermark as a fallback for existing stored entries. This permits selecting B with sequence 2 before A with sequence 1 without suppressing A when it is sent later. No additional entity list is added to network packets; states retain their native keys and the ending marker still yields one ACK.
-
-## Opt-in automatic report confirmation
-
-When component on_ack/on_ack_error automation is configured in auto mode, each accepted native automatic publish increments a local generation. The initial SubscribeStates sync also starts a confirmation cycle. Once the native iterator/deferred queue and existing event ACK queue drain, the node sends the existing thread_sed.batch marker with an auto:<random>:<sequence> token. HA's existing batch:<token> reply is sufficient; there is no new wire format or HA setting.
-
-The marker freezes its covered generation. Later updates remain outstanding even if the marker's ACK arrives. Matching requires the current connection, outstanding marker and exact token. The component callback receives batch_id/elapsed_ms/has_pending on success or batch_id/reason on failure. No snapshot replay is introduced for automatic confirmation, and explicit send snapshots do not themselves enter this callback path. Without configured hooks the monitor and its additional markers are disabled.
-
-A valid application ACK takes precedence over a subsequent connection close. An unconfirmed later write failure is retained for its own cycle. Callback automations execute after resetting transaction state and can publish new values or request sleep. Sleep-marker emission waits for pending automatic confirmation, while the original bounded sleep deadline still prevents an unavailable peer from holding the node awake forever. User-requested asynchronous callback actions are awaited before sleeping.
+transport: tcp 保留此前原生 API 实现。协议 v2 不尝试将 UDP 包转换成 TCP 字节流，也不允许把 UDP 条目交给 TCP listener。

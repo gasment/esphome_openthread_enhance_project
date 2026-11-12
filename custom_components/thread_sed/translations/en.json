@@ -8,19 +8,21 @@
         "data": {
           "host": "IPv6 address or hostname",
           "port": "API port",
-          "noise_psk": "Noise encryption key (optional)"
+          "noise_psk": "Encryption key (optional)",
+          "transport": "Transport"
         }
       }
     },
     "error": {
       "cannot_connect": "Cannot connect. Keep the node awake and check IPv6 routing.",
-      "invalid_auth": "Invalid Noise key or device identity.",
-      "encryption_required": "This node requires encryption. Enter its Noise key."
+      "invalid_auth": "Invalid encryption key or device identity.",
+      "encryption_required": "This node requires encryption. Enter its encryption key."
     },
     "abort": {
       "already_configured": "This device is already configured.",
       "invalid_discovery": "The discovery record is invalid.",
-      "reauth_successful": "Authentication updated."
+      "reauth_successful": "Authentication updated.",
+      "unique_id_mismatch": "The device identity does not match this entry."
     }
   }
 }

@@ -123,13 +123,13 @@ class APIFrameHelper {
     if (state_ == State::CLOSED)
       return APIError::OK;  // Already closed
     state_ = State::CLOSED;
-    int err = this->socket_->close();
+    int err = this->socket_ == nullptr ? 0 : this->socket_->close();
     if (err == -1)
       return APIError::CLOSE_FAILED;
     return APIError::OK;
   }
   APIError shutdown(int how) {
-    int err = this->socket_->shutdown(how);
+    int err = this->socket_ == nullptr ? 0 : this->socket_->shutdown(how);
     if (err == -1)
       return APIError::SHUTDOWN_FAILED;
     if (how == SHUT_RDWR) {
@@ -156,6 +156,7 @@ class APIFrameHelper {
   // Flow (ESP8266):         Log 1 (Nagle on) -> Log 2 -> Log 3 (NODELAY, flush all)
   //
   void set_nodelay_for_message(bool is_log_message) {
+    if (this->socket_ == nullptr) return;
     if (!is_log_message) {
       if (this->nodelay_counter_) {
         this->set_nodelay_raw_(true);
@@ -188,7 +189,9 @@ class APIFrameHelper {
   // footer, plaintext has footer=0). If a protocol with a plaintext footer is ever
   // added, this should become a virtual method.
   uint8_t frame_header_size(uint16_t payload_size, uint16_t message_type) const {
-#if defined(USE_THREAD_SED_API_NOISE) && defined(USE_THREAD_SED_API_PLAINTEXT)
+#ifdef USE_THREAD_SED_API_UDP
+    return 0;
+#elif defined(USE_THREAD_SED_API_NOISE) && defined(USE_THREAD_SED_API_PLAINTEXT)
     return this->frame_footer_size_
                ? this->frame_header_padding_
                : static_cast<uint8_t>(1 + ProtoSize::varint16(payload_size) + ProtoSize::varint16(message_type));

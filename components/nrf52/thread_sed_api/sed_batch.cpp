@@ -1,10 +1,14 @@
 #include "api_server.h"
+#include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include <algorithm>
 
 namespace esphome::thread_sed_api {
 bool APIServer::sed_is_ready() const {
+#ifdef USE_THREAD_SED_API_UDP
+  if (!network::is_connected() || !this->udp_.ready() || this->udp_.pending()) return false;
+#endif
   if (this->sed_sleep_finishing_ || this->shutting_down_ || this->sed_batch_done_) return false;
   for (auto &client : this->active_clients()) {
     if (client->sed_flush_ready()) return true;
@@ -12,7 +16,11 @@ bool APIServer::sed_is_ready() const {
   return false;
 }
 
-bool APIServer::sed_begin_batch(const void *owner, uint32_t timeout, const std::vector<EntityBase *> &entities, std::function<void(bool)> done) {
+bool APIServer::sed_begin_batch(const void *owner, uint32_t timeout, uint32_t resend, const std::vector<EntityBase *> &entities, std::function<void(bool)> done) {
+  if (!this->sed_manual_send_ || timeout==0 || timeout>60000 || resend>255) {
+    ESP_LOGW("thread_sed_api", "send rejected: invalid mode or ACK policy");
+    return false;
+  }
   if (this->sed_batch_done_) {
     ESP_LOGW("thread_sed_api", "send rejected: another batch is pending");
     return false;
@@ -42,6 +50,9 @@ bool APIServer::sed_begin_batch(const void *owner, uint32_t timeout, const std::
   this->sed_batch_owner_ = owner;
   this->sed_batch_started_ = millis();
   this->sed_batch_timeout_ = timeout;
+  this->sed_batch_resend_ = resend;
+  this->sed_batch_retries_left_ = resend;
+  this->sed_batch_delivery_error_ = nullptr;
   this->sed_batch_token_ = std::to_string(random_uint32()) + ":" + std::to_string(++this->sed_batch_sequence_);
   this->sed_batch_cutoff_ = this->sed_event_sequence_;
   this->sed_batch_event_cursor_ = 0;
@@ -63,6 +74,10 @@ bool APIServer::sed_batch_wants(EntityBase *entity) const {
 
 void APIServer::sed_cancel_batch(const void *owner) {
   if (this->sed_batch_owner_ != owner || !this->sed_batch_done_) return;
+  if (this->sed_batch_client_ != nullptr) this->sed_batch_client_->sed_cancel_snapshot();
+#ifdef USE_THREAD_SED_API_UDP
+  this->udp_.cancel();
+#endif
   this->sed_batch_done_ = nullptr;
   this->sed_batch_client_ = nullptr;
   this->sed_batch_owner_ = nullptr;
@@ -71,6 +86,12 @@ void APIServer::sed_cancel_batch(const void *owner) {
 
 void APIServer::sed_finish_batch(bool success, const char *reason) {
   if (!this->sed_batch_done_) return;
+  if (!success) {
+    if (this->sed_batch_client_ != nullptr) this->sed_batch_client_->sed_cancel_snapshot();
+#ifdef USE_THREAD_SED_API_UDP
+    this->udp_.cancel();
+#endif
+  }
   auto done = std::move(this->sed_batch_done_);
   this->sed_batch_done_ = nullptr;
   this->sed_batch_client_ = nullptr;
@@ -93,10 +114,33 @@ void APIServer::sed_batch_tick() {
   if (this->sed_batch_acked_) { this->sed_finish_batch(true, "ack"); return; }
   if (this->sed_batch_disconnected_) { this->sed_finish_batch(false, "disconnected"); return; }
   if (!this->sed_batch_client_->sed_session_ready()) { this->sed_finish_batch(false, "not ready"); return; }
-  if (millis() - this->sed_batch_started_ >= this->sed_batch_timeout_) {
-    this->sed_finish_batch(false, "timeout"); return;
+  if (this->sed_batch_delivery_error_ != nullptr) {
+    this->sed_finish_batch(false, this->sed_batch_delivery_error_); return;
   }
-  if (this->sed_batch_marker_sent_ || !this->sed_batch_client_->sed_flush_ready()) return;
+  if (this->sed_batch_marker_sent_) {
+#ifndef USE_THREAD_SED_API_UDP
+    if (millis()-this->sed_batch_ack_started_ >= this->sed_batch_timeout_) {
+      if (this->sed_batch_retries_left_ == 0) { this->sed_finish_batch(false,"ack_timeout"); return; }
+      if (!this->sed_batch_client_->sed_flush_ready()) return;
+      if (!this->sed_send_to(this->sed_batch_client_,"thread_sed.batch",this->sed_batch_token_)) {
+        this->sed_finish_batch(false,"marker write failed"); return;
+      }
+      --this->sed_batch_retries_left_;
+      this->sed_batch_ack_started_=millis();
+    }
+#else
+    // A separate safety cap covers interrupted schema negotiation/emission;
+    // the UDP transport itself implements the configured per-round ACK timer.
+    if (millis()-this->sed_batch_started_ >= (this->sed_batch_timeout_+5000U)*(this->sed_batch_resend_+1U)+10000U)
+      this->sed_finish_batch(false,"delivery_stalled");
+#endif
+    return;
+  }
+  if (millis()-this->sed_batch_started_ >= 5000U) { this->sed_finish_batch(false,"snapshot_stalled"); return; }
+  if (!this->sed_batch_client_->sed_flush_ready()) return;
+#ifdef USE_THREAD_SED_API_UDP
+  if (!this->udp_.can_flush()) return;
+#endif
 
   // In manual mode, events share the one batch ACK. Keep them in RAM until it
   // arrives; events recorded after send() began belong to the next batch.
@@ -111,13 +155,11 @@ void APIServer::sed_batch_tick() {
       this->sed_batch_event_cursor_ = event.sequence;
       return;  // Bounded work per ESPHome loop.
     }
-  } else {
-    for (auto &event : this->sed_events_)
-      if (event.sequence <= this->sed_batch_cutoff_ && this->sed_batch_wants(event.entity)) return;  // Existing auto event ACK path.
   }
   if (!this->sed_send_to(this->sed_batch_client_, "thread_sed.batch", this->sed_batch_token_)) {
     this->sed_finish_batch(false, "marker write failed"); return;
   }
   this->sed_batch_marker_sent_ = true;
+  this->sed_batch_ack_started_ = millis();
 }
 }

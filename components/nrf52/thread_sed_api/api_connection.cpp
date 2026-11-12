@@ -148,7 +148,9 @@ static const int CAMERA_STOP_STREAM = 5000;
 #endif  // USE_DEVICES
 
 APIConnection::APIConnection(std::unique_ptr<socket::Socket> sock, APIServer *parent) : parent_(parent) {
-#if defined(USE_THREAD_SED_API_PLAINTEXT) && defined(USE_THREAD_SED_API_NOISE)
+#ifdef USE_THREAD_SED_API_UDP
+  this->helper_=std::unique_ptr<APIFrameHelper>{new APIUDPFrameHelper(parent)};
+#elif defined(USE_THREAD_SED_API_PLAINTEXT) && defined(USE_THREAD_SED_API_NOISE)
   auto &noise_ctx = parent->get_noise_ctx();
   if (noise_ctx.has_psk()) {
     this->helper_ = std::unique_ptr<APIFrameHelper>{new APINoiseFrameHelper(std::move(sock), noise_ctx)};
@@ -271,6 +273,11 @@ void APIConnection::begin_iterator_(ActiveIterator type) {
 }
 
 void APIConnection::loop() {
+#ifdef USE_THREAD_SED_API_UDP
+  if (this->flags_.batch_scheduled) this->process_batch_();
+  if (this->active_iterator_ != ActiveIterator::NONE) this->process_active_iterator_();
+  return;
+#endif
   if (this->flags_.next_close) {
     // requested a disconnect - don't close socket here, let APIServer::loop() do it
     // so getpeername() still works for the disconnect trigger
@@ -2160,6 +2167,12 @@ void APIConnection::on_subscribe_states_request() {
   this->parent_->sed_auto_published(this);
   if (!this->parent_->sed_manual_send() && this->active_iterator_ == ActiveIterator::NONE)
     this->begin_iterator_(ActiveIterator::INITIAL_STATE);
+}
+void APIConnection::sed_cancel_snapshot() {
+  // Cancellation may interrupt an on-demand descriptor snapshot as well.
+  // Do not leave an iterator writing into the next transaction's staging area.
+  if (this->active_iterator_ != ActiveIterator::NONE) this->destroy_active_iterator_();
+  this->deferred_batch_.clear();
 }
 void APIConnection::sed_begin_snapshot(const std::vector<EntityBase *> *entities) {
   this->begin_iterator_(ActiveIterator::INITIAL_STATE);

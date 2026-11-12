@@ -147,3 +147,8 @@
 - 不运行固件编译；新驱动接线与电压精度仍待上板验证。
 
 - 修复内置 ADC 的设备树宏生成：任意自建节点缺少 binding，改用 Zephyr 标准 zephyr,user io-channels 与按索引获取 adc_dt_spec；仍不依赖外部 adc 平台，用户 YAML 不变。
+
+
+## 2026-11-12：Thread SED UDP+ACK
+
+默认传输改为 UDP，保留实体发现和手动批量 send。完整逻辑变更、带注释 YAML diff 和待上板状态见 THREAD_SED_UDP_CHANGELOG.md。

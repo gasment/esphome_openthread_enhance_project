@@ -20,6 +20,20 @@ bool APIServer::sed_send_to(APIConnection *client, const char *service, const st
   item.value = StringRef(value);  // Encoded synchronously before value expires.
   call.data.push_back(item);
   if (!client->sed_flush_ready()) return false;
+#ifdef USE_THREAD_SED_API_UDP
+  if (!this->udp_.can_flush() && std::strcmp(service, "thread_sed.batch_event") != 0) return false;
+  if (std::strcmp(service, "thread_sed.batch") == 0) {
+    const bool manual=this->sed_batch_done_ && client==this->sed_batch_client_;
+    return client->send_homeassistant_action(call) && this->udp_.flush("batch:" + value,
+        manual?this->sed_batch_timeout_:this->sed_auto_timeout_,
+        manual?this->sed_batch_resend_:this->sed_auto_resend_);
+  }
+  if (std::strcmp(service, "thread_sed.event") == 0) {
+    const bool queued=client->send_homeassistant_action(call) && this->udp_.flush("event:" + value.substr(0, value.find(':', value.find(':')+1)));
+    this->sed_auto_published(client,queued);
+    return queued;
+  }
+#endif
   const bool queued = client->send_homeassistant_action(call);
   if (std::strcmp(service, "thread_sed.event") == 0) this->sed_auto_published(client, queued);
   return queued;
@@ -49,6 +63,23 @@ void APIServer::sed_control(APIConnection *client, StringRef value) {
   }
 }
 bool APIServer::sed_sleep_guard() {
+#ifdef USE_THREAD_SED_API_UDP
+  if (this->sed_batch_done_ || this->sed_auto_pending() || this->sed_auto_callbacks_running()) return false;
+  if (!this->sed_sleep_pending_) {
+    this->sed_sleep_pending_=true;
+    this->sed_sleep_started_=millis();
+  }
+  if (this->udp_.pending()) {
+    if (millis()-this->sed_sleep_started_<this->sed_sleep_budget_) return false;
+    ESP_LOGW("thread_sed_api", "UDP sleep deadline expired; queued events remain for next wake");
+    this->udp_.cancel();
+  }
+  this->sed_poll(false);
+  if (this->sed_fast_poll_) return false;
+  if (!this->sed_sleep_finishing_) this->udp_.sleep();
+  this->sed_sleep_finishing_=true;
+  return true;
+#endif
   if (this->sed_batch_done_ || this->sed_auto_callbacks_running()) return false;
   const uint32_t now = millis();
   if (!this->sed_sleep_pending_) {
@@ -69,7 +100,11 @@ bool APIServer::sed_sleep_guard() {
 }
 void APIServer::sed_wake() {
   this->sed_sleep_pending_ = false; this->sed_sleep_ack_ = false; this->sed_sleep_finishing_ = false;
+#ifdef USE_THREAD_SED_API_UDP
+  this->udp_.wake();
+#else
   this->outgoing_conn_.wake();
+#endif
 }
 uint32_t APIServer::sed_sleep_seconds() const {
 #ifdef USE_THREAD_SED_SLEEP
@@ -101,6 +136,11 @@ void APIServer::sed_queue_event(EntityBase *entity, StringRef type) {
     ESP_LOGW("thread_sed_api", "Event queue full; newest event dropped"); return;
   }
   this->sed_events_.push_back({++this->sed_event_sequence_, entity->get_object_id_hash(), std::string(type.c_str(), type.size()), entity});
+  if (!this->sed_manual_send_) {
+    for (auto &client : this->active_clients()) {
+      if (client->sed_session_ready()) { this->sed_auto_published(client.get()); break; }
+    }
+  }
   // A newly captured event invalidates an outstanding sleep marker.
   if (this->sed_sleep_pending_) { this->sed_sleep_ack_ = false; this->sed_token_ = random_uint32(); this->sed_marker_sent_ = 0; }
 }
@@ -113,18 +153,15 @@ void APIServer::sed_tick() {
 #endif
   if (this->sed_sleep_finishing_) { this->sed_poll(false); return; }
   this->sed_poll(!this->sed_sleep_pending_ || !this->sed_sleep_ack_);
-  if (!this->sed_manual_send_ && !this->sed_events_.empty() && (this->sed_event_sent_ == 0 || millis() - this->sed_event_sent_ >= 500)) {
-    const auto &event = this->sed_events_.front();
-    const std::string token = std::to_string(this->sed_boot_) + ":" + std::to_string(event.sequence) + ":" + std::to_string(event.key) + ":" + event.type;
-    if (this->sed_send("thread_sed.event", token)) this->sed_event_sent_ = millis();
-  }
 #ifdef USE_THREAD_SED_SLEEP
   auto *sleep = static_cast<deep_sleep_nrf52::DeepSleepComponent *>(this->sed_sleep_);
   if (sleep != nullptr && !sleep->is_pending() && this->sed_sleep_pending_) this->sed_wake();
 #endif
+#ifndef USE_THREAD_SED_API_UDP
   if (this->sed_sleep_pending_ && !this->sed_sleep_ack_ && !this->sed_auto_pending() && (this->sed_manual_send_ || this->sed_events_.empty()) &&
       (this->sed_marker_sent_ == 0 || millis() - this->sed_marker_sent_ >= 500)) {
     if (this->sed_send("thread_sed.sleep", std::to_string(this->sed_token_))) this->sed_marker_sent_ = millis();
   }
+#endif
 }
 }

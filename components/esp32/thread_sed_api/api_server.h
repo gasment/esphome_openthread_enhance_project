@@ -3,6 +3,7 @@
 #include "esphome/core/defines.h"
 #ifdef USE_THREAD_SED_API
 #include "api_buffer.h"
+#include "udp_transport.h"
 // Must precede clients_ so APIConnection is complete for default_delete (libc++).
 #include "api_connection.h"
 #if defined(USE_THREAD_SED_API_NOISE) || defined(USE_NOISE_SPARE_EPHEMERAL)
@@ -59,6 +60,12 @@ class APIServer final : public Component
 {
  public:
   APIServer();
+#ifdef USE_THREAD_SED_API_UDP
+  friend class SedUdpTransport;
+  friend class APIUDPFrameHelper;
+  SedUdpTransport udp_{this};
+  void set_udp_key(const std::array<uint8_t,32> &key) { udp_.set_key(key); }
+#endif
   void set_sleep_budget(uint32_t ms) { sed_sleep_budget_ = ms; }
   bool sed_transport_ready() const {
 #ifdef USE_THREAD_SED_API_NOISE
@@ -83,9 +90,9 @@ class APIServer final : public Component
   void set_manual_send(bool value) { sed_manual_send_ = value; }
   bool sed_manual_send() const { return sed_manual_send_; }
   bool sed_is_ready() const;
-  bool sed_begin_batch(const void *owner, uint32_t timeout, const std::vector<EntityBase *> &entities, std::function<void(bool)> done);
+  bool sed_begin_batch(const void *owner, uint32_t timeout, uint32_t resend, const std::vector<EntityBase *> &entities, std::function<void(bool)> done);
   bool sed_batch_wants(EntityBase *entity) const;
-  void enable_auto_ack(uint32_t timeout) { sed_auto_enabled_ = true; sed_auto_timeout_ = timeout; }
+  void enable_auto_ack(uint32_t timeout, uint32_t resend) { sed_auto_enabled_ = true; sed_auto_timeout_ = timeout; sed_auto_resend_ = resend; }
   Trigger<std::string, uint32_t, bool> *get_auto_ack_trigger() { return &sed_auto_ack_trigger_; }
   Trigger<std::string, std::string> *get_auto_ack_error_trigger() { return &sed_auto_error_trigger_; }
   bool sed_auto_pending() const { return sed_auto_enabled_ && sed_auto_generation_ != sed_auto_confirmed_; }
@@ -424,7 +431,9 @@ class APIServer final : public Component
   bool sed_auto_enabled_{false}, sed_auto_waiting_{false}, sed_auto_acked_{false}, sed_auto_disconnected_{false};
   APIConnection *sed_auto_client_{nullptr};
   uint32_t sed_auto_generation_{0}, sed_auto_confirmed_{0}, sed_auto_marker_generation_{0};
-  uint32_t sed_auto_sequence_{0}, sed_auto_started_{0}, sed_auto_timeout_{2000};
+  uint32_t sed_auto_sequence_{0}, sed_auto_started_{0}, sed_auto_timeout_{500};
+  uint32_t sed_auto_ack_started_{0}, sed_auto_event_cursor_{0}, sed_auto_marker_event_cutoff_{0};
+  uint16_t sed_auto_resend_{2}, sed_auto_retries_left_{0};
   std::string sed_auto_token_;
   const char *sed_auto_error_{nullptr};
   Trigger<std::string, uint32_t, bool> sed_auto_ack_trigger_;
@@ -436,6 +445,9 @@ class APIServer final : public Component
   std::string sed_batch_token_;
   std::vector<EntityBase *> sed_batch_entities_;
   uint32_t sed_batch_sequence_{0}, sed_batch_started_{0}, sed_batch_timeout_{0};
+  uint32_t sed_batch_ack_started_{0};
+  uint16_t sed_batch_resend_{0}, sed_batch_retries_left_{0};
+  const char *sed_batch_delivery_error_{nullptr};
   uint32_t sed_batch_cutoff_{0}, sed_batch_event_cursor_{0};
   bool sed_batch_marker_sent_{false}, sed_batch_acked_{false}, sed_batch_disconnected_{false};
   struct SedEvent { uint32_t sequence; uint32_t key; std::string type; EntityBase *entity; };

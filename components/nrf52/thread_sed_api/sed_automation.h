@@ -14,7 +14,8 @@ template<typename... Ts> class IsReadyCondition : public Condition<Ts...> {
 template<typename... Ts> class SendAction : public Action<Ts...> {
  public:
   explicit SendAction(APIServer *parent) : parent_(parent) {}
-  TEMPLATABLE_VALUE(uint32_t, timeout);
+  TEMPLATABLE_VALUE(uint32_t, ack_timeout);
+  TEMPLATABLE_VALUE(uint32_t, ack_resend);
   void set_entities(std::initializer_list<EntityBase *> entities) {
     this->entities_.assign(entities.begin(), entities.end());
   }
@@ -35,7 +36,7 @@ template<typename... Ts> class SendAction : public Action<Ts...> {
       if (branch.empty()) this->play_next_(x...);
       else branch.play(x...);
     };
-    if (!this->parent_->sed_begin_batch(this, this->timeout_.value(x...), this->entities_, done)) done(false);
+    if (!this->parent_->sed_begin_batch(this, this->ack_timeout_.value(x...), this->ack_resend_.value(x...), this->entities_, done)) done(false);
   }
  protected:
   void play(const Ts &...x) override {}

@@ -135,6 +135,10 @@ void APIServer::setup() {
   this->outgoing_conn_.setup();
 #endif
 
+#ifdef USE_THREAD_SED_API_UDP
+  this->udp_.setup(this->port_);
+  return;
+#endif
   // Listener last: on failure socket_failed_() returns early, and an
   // outgoing_connection build keeps dialing out without one
   this->socket_ = socket::socket_ip_loop_monitored(SOCK_STREAM, 0).release();  // monitored for incoming connections
@@ -175,6 +179,11 @@ void APIServer::setup() {
 }
 
 void APIServer::loop() {
+#ifdef USE_THREAD_SED_API_UDP
+  this->udp_.loop();
+  this->sed_tick();
+  return;
+#endif
   this->sed_tick();
   // Accept new clients only if the socket exists and has incoming connections
   if (this->socket_ && this->socket_->ready()) {
@@ -376,6 +385,10 @@ void APIServer::on_outgoing_target_client(APIConnection *conn) {
 #endif
 
 void APIServer::dump_config() {
+#ifdef USE_THREAD_SED_API_UDP
+  ESP_LOGCONFIG(TAG, "Thread SED UDP: port=%u; no TCP handshake or sleep ACK exchange", this->port_);
+  return;
+#endif
   char addr_buf[network::USE_ADDRESS_BUFFER_SIZE];
   ESP_LOGCONFIG(TAG,
                 "Server:\n"

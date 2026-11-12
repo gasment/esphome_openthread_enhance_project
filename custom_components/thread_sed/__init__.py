@@ -1,21 +1,28 @@
-"""Thread SED: one authenticated native API device per config entry."""
+"""Thread SED: one UDP/ACK or TCP-compatible device per config entry."""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from .const import DOMAIN, PLATFORMS
 from .session import Session
+from .udp_session import UdpSession
+from .udp_listener import UdpListener
 from .transport import ReverseListener
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    data = hass.data.setdefault(DOMAIN, {'sessions':{}, 'listener':None})
-    session = Session(hass, entry)
+    data = hass.data.setdefault(DOMAIN, {'sessions':{}, 'listener':None, 'udp_listener':None})
+    session = (UdpSession if entry.data.get('transport','tcp')=='udp' else Session)(hass, entry)
     await session.load()
     data['sessions'][session.mac] = session
     try:
-        if data['listener'] is None:
+        if data['listener'] is None and entry.data.get('transport','tcp')=='tcp':
             listener = ReverseListener(data['sessions'])
             await listener.start()
             data['listener'] = listener
+        if data.get('udp_listener') is None:
+            listener = UdpListener(data['sessions'])
+            await listener.start()
+            data['udp_listener'] = listener
+        if isinstance(session,UdpSession): session.listener=data['udp_listener']
         entry.runtime_data = session
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         session.task = hass.async_create_background_task(session.run(), f'Thread SED {session.mac}')
@@ -23,11 +30,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except BaseException as err:
         data['sessions'].pop(session.mac, None)
         await session.close()
+        if not data['sessions'] and data.get('udp_listener'):
+            await data['udp_listener'].close()
+            data['udp_listener']=None
         if not data['sessions'] and data['listener']:
             await data['listener'].close()
             data['listener'] = None
         if isinstance(err,OSError):
-            raise ConfigEntryNotReady('Cannot listen for Thread SED IPv6 TCP on port 6064') from err
+            raise ConfigEntryNotReady('Cannot listen for Thread SED IPv6 UDP/TCP on port 6064') from err
         raise
     return True
 
@@ -41,6 +51,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await session.close()
     data = hass.data[DOMAIN]
     data['sessions'].pop(session.mac, None)
+    if not data['sessions'] and data.get('udp_listener'):
+        await data['udp_listener'].close()
+        data['udp_listener']=None
     if not data['sessions'] and data['listener']:
         await data['listener'].close()
         data['listener'] = None

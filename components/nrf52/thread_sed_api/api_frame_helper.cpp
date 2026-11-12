@@ -180,6 +180,7 @@ APIError APIFrameHelper::write_raw_iov_(const struct iovec *iov, int iovcnt, uin
 }
 
 const char *APIFrameHelper::get_peername_to(std::span<char, socket::SOCKADDR_STR_LEN> buf) const {
+  if (this->socket_ == nullptr) { memcpy(buf.data(), "UDP", 4); return buf.data(); }
   if (this->socket_) {
     this->socket_->getpeername_to(buf);
   } else {

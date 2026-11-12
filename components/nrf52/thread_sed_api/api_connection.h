@@ -3,6 +3,7 @@
 #include "esphome/core/defines.h"
 #ifdef USE_THREAD_SED_API
 #include "api_frame_helper.h"
+#include "api_frame_helper_udp.h"
 #ifdef USE_THREAD_SED_API_NOISE
 #include "api_frame_helper_noise.h"
 #endif
@@ -291,7 +292,20 @@ class APIConnection final : public APIServerConnectionBase {
 #endif
   void on_list_entities_request() { this->begin_iterator_(ActiveIterator::LIST_ENTITIES); }
   void on_subscribe_states_request();
+#ifdef USE_THREAD_SED_API_UDP
+  void sed_udp_ready(bool ready) {
+    flags_.connection_state=static_cast<uint8_t>(ConnectionState::AUTHENTICATED);
+    // Before onboarding there is no receiver: cache entity state normally,
+    // but do not turn an automatic publication into a failed connection.
+    flags_.remove=false;
+    flags_.state_subscription=ready;
+    flags_.service_call_subscription=ready;
+    sed_ready_=ready;
+    if (ready) this->helper_->init();
+  }
+#endif
   void sed_begin_snapshot(const std::vector<EntityBase *> *entities);
+  void sed_cancel_snapshot();
   bool sed_wants_entity(EntityBase *entity) const {
     if (this->sed_selected_entities_ == nullptr) return true;
     for (auto *selected : *this->sed_selected_entities_) if (selected == entity) return true;
@@ -642,7 +656,7 @@ class APIConnection final : public APIServerConnectionBase {
   // === Optimal member ordering for 32-bit systems ===
 
   // Group 1: Pointers (4 bytes each on 32-bit)
-#if defined(USE_THREAD_SED_API_NOISE) && defined(USE_THREAD_SED_API_PLAINTEXT)
+#if defined(USE_THREAD_SED_API_UDP) || (defined(USE_THREAD_SED_API_NOISE) && defined(USE_THREAD_SED_API_PLAINTEXT))
   std::unique_ptr<APIFrameHelper> helper_;
 #elif defined(USE_THREAD_SED_API_NOISE)
   std::unique_ptr<APINoiseFrameHelper> helper_;
