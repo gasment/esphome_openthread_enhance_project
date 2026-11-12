@@ -162,7 +162,12 @@ async def probe_device(host,port=6064,key=None,mac='000000000000'):
     from aioesphomeapi import api_pb2,model
     from .udp_session import protobuf_frames
     from .transport import normalize_mac
-    addresses=await asyncio.get_running_loop().getaddrinfo(host,port,family=socket.AF_INET6,type=socket.SOCK_DGRAM)
+    _LOGGER.info('Thread SED onboarding: resolving [%s]:%s (target MAC %s)',host,port,mac)
+    try:
+        addresses=await asyncio.get_running_loop().getaddrinfo(host,port,family=socket.AF_INET6,type=socket.SOCK_DGRAM)
+    except OSError as err:
+        _LOGGER.warning('Thread SED onboarding address resolution failed for [%s]:%s: %s',host,port,err)
+        raise
     if not addresses: raise OSError('No IPv6 address')
     peer=addresses[0][4]
     sock=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM)
@@ -170,8 +175,13 @@ async def probe_device(host,port=6064,key=None,mac='000000000000'):
     encoder=Encoder(mac,key)
     assembler=Reassembler()
     loop=asyncio.get_running_loop()
+    received=0
+    unexpected_peer=0
+    fragments=0
+    incomplete=0
     try:
-        for _ in range(5):
+        _LOGGER.info('Thread SED onboarding: probing [%s]:%s via IPv6 UDP',peer[0],peer[1])
+        for attempt in range(5):
             _,packets=encoder.encode(PROBE)
             for packet in packets: await loop.sock_sendto(sock,packet,peer)
             deadline=loop.time()+1
@@ -179,14 +189,22 @@ async def probe_device(host,port=6064,key=None,mac='000000000000'):
                 try:
                     data,address=await asyncio.wait_for(loop.sock_recvfrom(sock,2048),deadline-loop.time())
                 except asyncio.TimeoutError: break
-                if address[0]!=peer[0] or address[1]!=peer[1]: continue
+                received+=1
+                if address[0]!=peer[0] or address[1]!=peer[1]:
+                    unexpected_peer+=1
+                    _LOGGER.debug('Thread SED onboarding ignored unexpected reply source %s (expected %s)',address,peer)
+                    continue
                 packet=decode(data,key)
                 if packet.kind!=DATA or not packet.flags&2: continue
+                fragments+=1
                 body=assembler.feed(packet,address)
                 if body is None: continue
                 messages=protobuf_frames(body)
                 info=next((m for m in messages if isinstance(m,api_pb2.DeviceInfoResponse)),None)
                 if info is None or not any(isinstance(m,api_pb2.ListEntitiesDoneResponse) for m in messages):
+                    incomplete+=1
+                    _LOGGER.warning('Thread SED onboarding received incomplete descriptors from [%s]:%s: device_info=%s list_done=%s',
+                        address[0],address[1],info is not None,any(isinstance(m,api_pb2.ListEntitiesDoneResponse) for m in messages))
                     continue
                 identity=normalize_mac(info.mac_address)
                 if identity!=packet.mac or (mac!='000000000000' and identity!=normalize_mac(mac)):
@@ -194,7 +212,17 @@ async def probe_device(host,port=6064,key=None,mac='000000000000'):
                 reply=Encoder(identity,key)
                 _,acks=reply.encode(ACK,packet.boot,group=packet.group)
                 for ack in acks: await loop.sock_sendto(sock,ack,address)
+                _LOGGER.info('Thread SED onboarding accepted %s from [%s]:%s; descriptor group %s ACK sent',identity,address[0],address[1],packet.group)
                 return model.DeviceInfo.from_pb(info)
-        raise asyncio.TimeoutError('No Thread SED UDP response')
+        _LOGGER.warning('Thread SED onboarding timed out for [%s]:%s: received=%s descriptor_fragments=%s incomplete_groups=%s unexpected_source=%s. Keep the node awake and check the HA host IPv6 route to this OMR address.',
+            peer[0],peer[1],received,fragments,incomplete,unexpected_peer)
+        raise asyncio.TimeoutError('No complete Thread SED UDP descriptor response')
+    except OSError as err:
+        if not isinstance(err,asyncio.TimeoutError):
+            _LOGGER.warning('Thread SED onboarding UDP socket error for [%s]:%s: %s',peer[0],peer[1],err)
+        raise
+    except (ValueError,InvalidTag,DecodeError) as err:
+        _LOGGER.warning('Thread SED onboarding rejected reply from [%s]:%s: %s (%s)',peer[0],peer[1],err,type(err).__name__)
+        raise
     finally:
         sock.close()

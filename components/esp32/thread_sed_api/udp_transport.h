@@ -41,6 +41,8 @@ class SedUdpTransport {
   struct SavedPeer { uint8_t address[16]; uint16_t port; uint32_t scope; };
   void bind_peer_(const sockaddr_storage &peer, socklen_t length);
   void receive_();
+  bool open_socket_();
+  void reset_delivery_(const char *reason);
   bool send_(uint8_t kind, uint32_t group, uint16_t part, uint16_t parts,
              const uint8_t *data, size_t size, uint8_t flags=0);
   void transmit_();
@@ -49,6 +51,9 @@ class SedUdpTransport {
   std::unique_ptr<socket::Socket> socket_;
   sockaddr_storage peer_{};
   socklen_t peer_len_{0};
+  uint16_t port_{0};
+  bool network_connected_{false};
+  uint32_t socket_retry_at_{0};
   ESPPreferenceObject preference_;
   SavedPeer saved_{};
   std::array<uint8_t,6> mac_{};

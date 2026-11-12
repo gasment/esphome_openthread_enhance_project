@@ -223,6 +223,29 @@ class UdpTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(info.name,'test-sed')
 
+    async def test_repeated_onboarding_same_address_port_and_identity(self):
+        key=self.session.udp_key
+        port=self.node.getsockname()[1]
+        boots=[]
+        async def respond():
+            data,peer=await asyncio.get_running_loop().sock_recvfrom(self.node,2048)
+            probe=wire.decode(data,key)
+            self.assertEqual(probe.kind,wire.PROBE)
+            self.assertEqual(probe.mac,MAC)  # Discovery carries the known identity.
+            encoder=wire.Encoder(MAC,key)
+            boots.append(encoder.boot)
+            group,packets=encoder.encode(wire.DATA,descriptors(),schema=SCHEMA,flags=wire.DESCRIPTORS)
+            for packet in packets: await asyncio.get_running_loop().sock_sendto(self.node,packet,peer)
+            data,_=await asyncio.get_running_loop().sock_recvfrom(self.node,2048)
+            ack=wire.decode(data,key)
+            self.assertEqual((ack.kind,ack.group,ack.payload),(wire.ACK,group,encoder.boot))
+        for _ in range(2):
+            task=asyncio.create_task(respond())
+            info=await udp_listener.probe_device('::1',port,key,MAC)
+            await task
+            self.assertEqual(info.mac_address,'AA:BB:CC:DD:EE:FF')
+        self.assertNotEqual(boots[0],boots[1])
+
     async def test_old_wake_cannot_overwrite_new_state_or_sleep(self):
         await self.establish()
         old=self.encoder

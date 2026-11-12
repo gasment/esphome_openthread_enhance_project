@@ -2,6 +2,7 @@
 #ifdef USE_THREAD_SED_API_UDP
 #include "api_server.h"
 #include "api_frame_helper_udp.h"
+#include "esphome/components/network/util.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include <algorithm>
@@ -40,12 +41,10 @@ void SedUdpTransport::setup(uint16_t port) {
   for(size_t i=0;i<16;i++) schema_[i]=(hexbyte(fingerprint[i*2])<<4)|hexbyte(fingerprint[i*2+1]);
   if (!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }
   group_=random_uint32();
-  socket_=socket::socket(AF_INET6,SOCK_DGRAM,IPPROTO_UDP);
-  sockaddr_storage local{};
-  const auto len=socket::set_sockaddr_any(reinterpret_cast<sockaddr *>(&local),sizeof(local),port);
-  if(!socket_ || socket_->setblocking(false)!=0 || socket_->bind(reinterpret_cast<sockaddr *>(&local),len)!=0) {
-    ESP_LOGE(TAG,"UDP socket setup failed: %d",errno); owner_->mark_failed(); return;
-  }
+  port_=port;
+  network_connected_=network::is_connected();
+  open_socket_();
+  socket_retry_at_=millis();
   preference_=global_preferences->make_preference<SavedPeer>(0x54534432UL,true);
   if(preference_.load(&saved_) && saved_.port!=0) {
     auto *peer=reinterpret_cast<sockaddr_in6 *>(&peer_);
@@ -53,8 +52,31 @@ void SedUdpTransport::setup(uint16_t port) {
     memcpy(&peer->sin6_addr,saved_.address,16); peer_len_=sizeof(*peer);
   }
   auto *client=owner_->add_client_(nullptr);
-  client->sed_udp_ready(ready());
+  client->sed_udp_ready(network_connected_ && ready());
   ESP_LOGCONFIG(TAG,"UDP port %u; cached HA endpoint: %s",port,ready()?"YES":"NO");
+}
+bool SedUdpTransport::open_socket_() {
+  // Recreate the native receive context after a Thread detach/reattach, even
+  // if the OMR address and port are identical to the previous attachment.
+  socket_.reset();
+  auto sock=socket::socket_loop_monitored(AF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+  sockaddr_storage local{};
+  const auto len=socket::set_sockaddr_any(reinterpret_cast<sockaddr *>(&local),sizeof(local),port_);
+  if(!sock || len==0 || sock->setblocking(false)!=0 ||
+      sock->bind(reinterpret_cast<sockaddr *>(&local),len)!=0) {
+    ESP_LOGW(TAG,"UDP socket bind failed on port %u: errno=%d; will retry",port_,errno);
+    return false;
+  }
+  socket_=std::move(sock);
+  return true;
+}
+void SedUdpTransport::reset_delivery_(const char *reason) {
+  // Notify owners in the regular sed_tick() path, never from a network callback.
+  // Their cached events remain available for a later send.
+  if(owner_->sed_batch_done_) owner_->sed_batch_delivery_error_=reason;
+  if(owner_->sed_auto_pending()) owner_->sed_auto_error_=reason;
+  owner_->clients_[0]->sed_cancel_snapshot();
+  cancel();
 }
 void SedUdpTransport::bind_peer_(const sockaddr_storage &peer,socklen_t length) {
   peer_=peer; peer_len_=length;
@@ -82,6 +104,9 @@ bool SedUdpTransport::flush(const std::string &control, uint32_t ack_timeout, ui
   tx_ack_timeout_=ack_timeout; tx_ack_resend_=ack_resend;
   tx_control_=control; tx_group_=++group_; attempts_=0; tx_part_=0;
   tx_flags_=schema_building_?2:0;
+  if(tx_flags_&2) ESP_LOGI(TAG,"Sending descriptors: group=%u bytes=%u fragments=%u",
+      static_cast<unsigned>(tx_group_),static_cast<unsigned>(tx_.size()),
+      static_cast<unsigned>((tx_.size()+CHUNK-1)/CHUNK));
   transmit_();
   return true;
 }
@@ -160,11 +185,22 @@ void SedUdpTransport::receive_() {
     if(count<int(HEADER) || memcmp(packet.data(),"TSD2",4)!=0) continue;
     auto *p=packet.data(); const uint8_t kind=p[4],flags=p[5];
     if(kind<1 || kind>5 || flags&~3 || get16(p+30)!=1 || get16(p+28)!=0) continue;
+    if(kind==1) {
+      char source[socket::SOCKADDR_STR_LEN];
+      socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,source);
+      ESP_LOGI(TAG,"UDP probe received from %s (encrypted=%s)",source,(flags&1)?"YES":"NO");
+    }
     const bool wildcard=std::all_of(p+6,p+12,[](uint8_t n){return n==0;});
-    if(memcmp(p+6,mac_.data(),6)!=0 && !(kind==1 && wildcard)) continue;
+    if(memcmp(p+6,mac_.data(),6)!=0 && !(kind==1 && wildcard)) {
+      if(kind==1) ESP_LOGW(TAG,"Probe rejected: target MAC does not match this node");
+      continue;
+    }
     size_t size=count-HEADER;
 #ifdef USE_THREAD_SED_UDP_ENCRYPTION
-    if(!(flags&1) || size<16) continue;
+    if(!(flags&1) || size<16) {
+      if(kind==1) ESP_LOGW(TAG,"Probe rejected: this node requires UDP encryption");
+      continue;
+    }
     size-=16;
     std::vector<uint8_t> decoded(size+1);
 #ifdef USE_THREAD_SED_NRF52
@@ -176,7 +212,10 @@ void SedUdpTransport::receive_() {
 #endif
     memcpy(p+HEADER,decoded.data(),size);
 #else
-    if(flags&1) continue;
+    if(flags&1) {
+      if(kind==1) ESP_LOGW(TAG,"Probe rejected: this node does not enable UDP encryption");
+      continue;
+    }
 #endif
     if(kind==1) {
       const bool was_ready=ready();
@@ -199,6 +238,7 @@ void SedUdpTransport::receive_() {
       const auto control=tx_control_; const bool schema=(tx_flags_&2)!=0;
       tx_.clear(); tx_control_.clear();
       if(schema) {
+        ESP_LOGI(TAG,"Descriptor ACK received: group=%u",static_cast<unsigned>(group));
         schema_building_=false;
         if(!paused_tx_.empty()) {
           tx_=std::move(paused_tx_); paused_tx_.clear(); tx_group_=paused_group_;
@@ -230,7 +270,35 @@ void SedUdpTransport::receive_() {
   }
 }
 void SedUdpTransport::loop() {
-  if(!socket_) return;
+  const bool connected=network::is_connected();
+  if(connected!=network_connected_) {
+    network_connected_=connected;
+    reset_delivery_(connected?"thread_reconnected":"thread_disconnected");
+    socket_.reset();
+    owner_->clients_[0]->sed_udp_ready(false);
+    socket_retry_at_=millis()-1000U;
+    if(connected) {
+      if(!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }
+      packet_sequence_=0;
+      commands_={}; command_cursor_=0;
+      ESP_LOGI(TAG,"Thread reattached; reopening UDP port %u and resetting unfinished transfers",port_);
+    } else {
+      ESP_LOGI(TAG,"Thread detached; UDP receive context and unfinished transfers cleared");
+    }
+  }
+  if(!connected) return;
+  if(!socket_) {
+    if(millis()-socket_retry_at_<1000U) return;
+    socket_retry_at_=millis();
+    if(!open_socket_()) return;
+    owner_->clients_[0]->sed_udp_ready(ready());
+    // Always permit a fresh descriptor exchange after recommissioning. This
+    // does not depend on the IP changing or on the HA schema cache being empty.
+    if(ready()) request_schema();
+    ESP_LOGI(TAG,"UDP listener restored on port %u",port_);
+    // Let sed_tick() finish interrupted actions before building a new snapshot.
+    return;
+  }
   receive_();
   auto *client=owner_->clients_[0].get();
   if(schema_requested_ && client->sed_flush_ready() && !schema_building_) {
@@ -239,6 +307,7 @@ void SedUdpTransport::loop() {
       paused_ack_timeout_=tx_ack_timeout_; paused_ack_resend_=tx_ack_resend_;
     }
     schema_requested_=false; schema_building_=true;
+    ESP_LOGI(TAG,"Building entity descriptors for UDP onboarding/sync");
     client->on_device_info_request(); client->on_subscribe_homeassistant_services_request();
     client->on_list_entities_request();
   }

@@ -1,6 +1,7 @@
 """Zeroconf discovery, optional encryption and device onboarding."""
 import asyncio
 import base64
+import logging
 from cryptography.exceptions import InvalidTag
 from aioesphomeapi import APIClient, APIConnectionError
 from aioesphomeapi.core import RequiresEncryptionAPIError
@@ -13,6 +14,8 @@ except ImportError:
 from .const import DOMAIN
 from .transport import normalize_mac
 from .udp_listener import probe_device
+
+_LOGGER=logging.getLogger(__name__)
 
 class ThreadSedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -74,9 +77,11 @@ class ThreadSedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(title=info.friendly_name or info.name, data=data)
             except RequiresEncryptionAPIError:
                 errors['base'] = 'encryption_required'
-            except (APIConnectionError, OSError, asyncio.TimeoutError):
+            except (APIConnectionError, OSError, asyncio.TimeoutError) as err:
+                _LOGGER.warning('Thread SED cannot connect to [%s]:%s using %s: %s (%s)',data.get('host'),data.get('port',6064),data.get('transport','udp'),err,type(err).__name__)
                 errors['base'] = 'cannot_connect'
-            except (ValueError, InvalidTag):
+            except (ValueError, InvalidTag) as err:
+                _LOGGER.warning('Thread SED onboarding authentication/identity rejected for [%s]:%s: %s (%s)',data.get('host'),data.get('port',6064),err,type(err).__name__)
                 errors['base'] = 'invalid_auth'
             finally:
                 if client: await client.disconnect(force=True)

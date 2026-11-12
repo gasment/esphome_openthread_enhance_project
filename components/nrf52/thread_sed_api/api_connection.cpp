@@ -2172,7 +2172,7 @@ void APIConnection::sed_cancel_snapshot() {
   // Cancellation may interrupt an on-demand descriptor snapshot as well.
   // Do not leave an iterator writing into the next transaction's staging area.
   if (this->active_iterator_ != ActiveIterator::NONE) this->destroy_active_iterator_();
-  this->deferred_batch_.clear();
+  this->clear_batch_();
 }
 void APIConnection::sed_begin_snapshot(const std::vector<EntityBase *> *entities) {
   this->begin_iterator_(ActiveIterator::INITIAL_STATE);
