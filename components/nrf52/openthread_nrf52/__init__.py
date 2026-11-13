@@ -255,3 +255,16 @@ async def poll_period_to_code(config, action_id, template_arg, args):
     return var
 
 joiner_config.register_actions("openthread_nrf52", ns, OpenThreadComponent)
+
+
+ReattachAction = ns.class_("OpenThreadReattachAction", automation.Action)
+
+
+@automation.register_action(
+    "openthread_nrf52.reattach", ReattachAction,
+    cv.maybe_simple_value({cv.GenerateID(): cv.use_id(OpenThreadComponent)}, key=CONF_ID),
+    synchronous=True,
+)
+async def reattach_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)

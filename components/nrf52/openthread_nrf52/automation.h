@@ -15,6 +15,13 @@ class OpenThreadKeepAliveAction final : public Action<Ts...>, public Parented<Op
   void play(const Ts &...x) override { this->parent_->keep_alive(); }
 };
 
+template<typename... Ts>
+class OpenThreadReattachAction final : public Action<Ts...>, public Parented<OpenThreadComponent> {
+ public:
+  explicit OpenThreadReattachAction(OpenThreadComponent *parent) : Parented<OpenThreadComponent>(parent) {}
+  void play(const Ts &...x) override { this->parent_->reattach(); }
+};
+
 /** Base class allowing to fetch OpenThread lock from parent component
  * while applying action
  *

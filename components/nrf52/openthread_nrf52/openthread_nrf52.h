@@ -77,6 +77,8 @@ class OpenThreadComponent final : public Component {
   void set_connected(bool connected) { this->connected_ = connected; }
   /// Queue one SED Data Poll. True means queued, not confirmed by the parent.
   bool keep_alive();
+  /// Forget the saved parent and start full attachment with the existing Dataset.
+  bool reattach();
 
 #ifdef USE_OPENTHREAD_JOINER
   void set_joiner_pskd(const std::string &pskd) { joiner_.set_pskd(pskd); }
