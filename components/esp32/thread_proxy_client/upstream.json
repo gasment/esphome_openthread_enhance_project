@@ -1,0 +1,7 @@
+{
+  "project": "ESPHome",
+  "version": "2026.10.2",
+  "source": "https://github.com/esphome/esphome/tree/2026.10.2/esphome/components/api",
+  "license": "MIT",
+  "changes": "Entity serializers adapted from thread_sed_api; UDP-only Thread BR client, no HA/TCP/Noise/commands."
+}

@@ -38,27 +38,6 @@ static void commissioner_status(httpd_req_t *req, int status)
     httpd_resp_set_status(req, text);
 }
 #endif
-#ifdef CONFIG_THREAD_BR_GATEWAY_WEB
-static thread_br_thread_gateway_web_t thread_gateway;
-void thread_br_web_set_thread_gateway(const thread_br_thread_gateway_web_t *value)
-{
-    if (value) thread_gateway = *value;
-    else memset(&thread_gateway, 0, sizeof(thread_gateway));
-}
-static void thread_gateway_status(httpd_req_t *req, int status)
-{
-    const char *text = "500 Internal Server Error";
-    switch (status) {
-      case 200: text = "200 OK"; break;
-      case 400: text = "400 Bad Request"; break;
-      case 404: text = "404 Not Found"; break;
-      case 409: text = "409 Conflict"; break;
-      case 503: text = "503 Service Unavailable"; break;
-    }
-    httpd_resp_set_status(req, text);
-}
-
-#endif
 
 // cJSON hooks are global, so leave them untouched. Copy serialized responses
 // into PSRAM using the preallocated API, with an internal-heap fallback.
@@ -167,21 +146,6 @@ static esp_err_t get_handler(httpd_req_t *req)
     }
     if (!strcmp(path, "/commissioner")) strcpy(path, "/commissioner.html");
 #endif
-#ifdef CONFIG_THREAD_BR_GATEWAY_WEB
-    if (!strncmp(path, "/thread_gateway/api/", sizeof("/thread_gateway/api/") - 1)) {
-        if (!thread_gateway.get) return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Thread gateway disabled");
-        int status = 200;
-        cJSON *result = thread_gateway.get(thread_gateway.context, path, &status);
-        thread_gateway_status(req, status);
-        return send_json(req, result, false);
-    }
-    if (!strcmp(path, "/thread_gateway") || !strncmp(path, "/thread_gateway/node/", sizeof("/thread_gateway/node/") - 1)) {
-        if (!thread_gateway.get) return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Thread gateway disabled");
-        strcpy(path, "/thread_gateway.html");
-    }
-    if (!strcmp(path, "/thread_gateway.html") && !thread_gateway.get)
-        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Thread gateway disabled");
-#endif
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); ++i)
         if (strcmp(path, routes[i].path) == 0) {
             bool diagnostic = routes[i].get == handle_ot_resource_network_diagnostics_request;
@@ -245,33 +209,6 @@ static esp_err_t post_handler(httpd_req_t *req)
         cJSON *result = commissioner.post(commissioner.context, request, &status);
         cJSON_Delete(request);
         commissioner_status(req, status);
-        return send_json(req, result, false);
-    }
-#endif
-#ifdef CONFIG_THREAD_BR_GATEWAY_WEB
-    if (!strncmp(req->uri, "/thread_gateway/api/", sizeof("/thread_gateway/api/") - 1)) {
-        if (!thread_gateway.post) return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Thread gateway disabled");
-        if (!req->content_len || req->content_len > 8192)
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request size");
-        char *body = malloc(req->content_len + 1);
-        if (!body) return ESP_ERR_NO_MEM;
-        size_t length = 0;
-        while (length < req->content_len) {
-            int n = httpd_req_recv(req, body + length, req->content_len - length);
-            if (n <= 0) { free(body); return ESP_FAIL; }
-            length += n;
-        }
-        body[length] = 0;
-        cJSON *request = cJSON_ParseWithLengthOpts(body, length + 1, NULL, true);
-        free(body);
-        if (!cJSON_IsObject(request)) {
-            cJSON_Delete(request);
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON object");
-        }
-        int status = 200;
-        cJSON *result = thread_gateway.post(thread_gateway.context, req->uri, request, &status);
-        cJSON_Delete(request);
-        thread_gateway_status(req, status);
         return send_json(req, result, false);
     }
 #endif

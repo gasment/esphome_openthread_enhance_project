@@ -1,51 +1,44 @@
 # battery_level_nrf52
 
-将 ADC 电压转换成电量估算；累计状态保存在 RAM，适合跨 System ON 休眠周期采样，不写 Flash。
+使用内置 nRF52/Zephyr SAADC 采样电压并估算电量，不加载或引用 ESPHome 的 `adc` 组件。累计样本保存在 RAM，适合跨 System ON 休眠周期采样，不写 Flash。
 
 ```yaml
-external_components:
-  - source:
-      type: local
-      path: ../external_components/nrf52
-    components: [battery_level_nrf52]
-
 sensor:
-  - platform: adc
-    pin: VDD
-    id: sys_vdd
-    name: "Battery Voltage"
-    update_interval: never
   - platform: battery_level_nrf52
     id: battery_level
     name: "Battery Level"
-    voltage_id: sys_vdd
-    samples: 3
+    adc:
+      pin: VDD
+      # samples: 1               # 每次 update 内连续读取的次数
+      # sampling_mode: avg       # avg / min / max
+      # voltage_multiplier: 1.0  # 分压还原或电压校准系数
+    voltage:                    # 可选；不需要独立电压实体时删除整个 voltage
+      id: sys_vdd
+      name: "Battery Voltage"
+    samples: 3                  # 累计 3 次有效 update 后发布一次电量
     curve: CR2450
-    update_interval: never
+    update_interval: never      # 或 10s 等常规轮询周期
 ```
 
-在 TIMER 唤醒分支执行一次：
+`adc` 可省略，默认 `pin: VDD`、单次读取、平均模式、倍率 1。输入支持 `VDD`、`VDDHDIV5`、`AIN0..AIN7` 及 nRF52 的合法模拟 GPIO 引脚。使用外部电池分压时配置 `voltage_multiplier`，同时按实际电池修改曲线和有效电压范围。
+
+ADC 使用内部参考、14 位分辨率、硬件 oversampling=8；VDDHDIV5 增益为 1/2，其余输入为 1/6。硬件通道在代码生成时分配，通过标准 `zephyr,user` 节点声明，所有使用同一分配器的 ADC 输入合计最多 8 个；该声明不加载外部 ADC 组件。
+
+手动更新：
 
 ```yaml
 - component.update: battery_level
 ```
 
-每次 update 主动读取一次 ADC，同时发布原电压；每累计 `samples` 个有效更新，取算术平均，
-用曲线分段线性插值、限制到 0..100 并取整，发布一次百分比。原始采样通过 ADC 的 `sample()`
-取得，不读取缓存值，也不等待 ADC 的延时过滤器。估算不应用源实体的发布过滤器；需要校准时调整曲线电压点。
+每次 update 直接读取硬件，不读取实体缓存。`adc.samples` 在同一次更新内连续采样并聚合；外层 `samples`（默认 3，1..255）累计多次有效更新的电压，取平均后按曲线插值、限制到 0..100 并取整。每次有效更新发布可选 `voltage` 实体，首次凑齐样本前电量没有状态。
 
-`samples` 默认 3，范围 1..255，表示更新次数，不是一次唤醒连续读三次 ADC。
-默认不轮询，组件不自行唤醒设备；放在 25min TIMER 分支就是每三个周期更新一次，按键和冷启动不计入。
-直接对 `sys_vdd` 执行 `component.update` 不会增加电量组件的样本数。
-重启后重新累计，首次凑齐样本前百分比没有状态，上报时应先检查 `battery_level.has_state()`。
+两个输出共享采样时序，`voltage` 是普通 sensor，不是独立 PollingComponent；不要对 `sys_vdd` 使用 `component.update`。采样时序只由电量组件的 `update_interval` 和 `component.update: battery_level` 控制。输出自动化同步回调更新自身时有重入保护。
 
-`min_voltage` 默认 1.7V，`max_voltage` 默认 3.6V。非有限、超范围或 ADC 返回的错误值 0V 不计数，
-也不覆盖已有估算；下一次有效更新继续累计。暂时无效样本不会重置已累计的数据。
-合法电压越过曲线端点时使用端点百分比。
+`min_voltage` 默认 1.7V，`max_voltage` 默认 3.6V。驱动失败、非有限或超范围读数不计数、不发布新电压、不覆盖已有电量；已累计样本保留。倍率在范围检查和曲线估算之前生效；`voltage.filters` 仅影响电压实体展示，不影响电量计算。setup 失败会将组件标为失败。
 
-内置 `CR2450` 为通用工程估算表，**不是飞利浦官方容量曲线**，不保证准确剩余容量。
-更换品牌、负载或温度条件后应根据实测调整；电压平台区的电量估计误差尤其大。
-可替换为显式曲线（下面仅演示配置格式，不是推荐标定值）：
+默认不轮询，组件不自行唤醒设备；重启后重新累计。组件不关联具体 deep_sleep 或 API，采样和发送仍由自动化控制。
+
+内置 CR2450 曲线是通用工程估算，不是电芯厂商的官方标定。可配置 2..32 个显式曲线点，电压严格递增，百分比在 0..100 且不递减：
 
 ```yaml
 curve:
@@ -57,5 +50,32 @@ curve:
     percentage: 100
 ```
 
-曲线要求 2..32 个点，电压严格递增，百分比在 0..100 内且不递减。电压源必须是 ADC，且 `raw: false`。
-组件不关联具体 deep_sleep 或 transporter，采样时机和发送仍由自动化控制。
+## 迁移 YAML diff
+
+此次重构移除 `voltage_id`，需要同时删除外部 ADC 实体及其驱动电量更新的自动化：
+
+```diff
+ sensor:
+-  - platform: adc
+-    pin: VDD
+-    id: sys_vdd
+-    name: "Battery Voltage"
+-    update_interval: 10s
+-    on_value:
+-      - component.update: battery_level
+   - platform: battery_level_nrf52
+     id: battery_level
+     name: "Battery Level"
+-    voltage_id: sys_vdd
++    adc:
++      pin: VDD
++    voltage:                      # 保留原电压实体的 ID 和名称
++      id: sys_vdd
++      name: "Battery Voltage"
+     samples: 3
+     curve: CR2450
+-    update_interval: 60s
++    update_interval: 10s          # 统一采样周期；手动控制则使用 never
+```
+
+不需要电压实体可以省略 `voltage`。不再需要其他 ADC 输入时，配置中不应保留 `platform: adc`。

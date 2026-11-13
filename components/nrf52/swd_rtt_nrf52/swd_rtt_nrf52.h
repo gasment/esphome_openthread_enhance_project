@@ -2,10 +2,25 @@
 
 #include "esphome/components/logger/logger.h"
 #include <hal/nrf_clock.h>
+#include <hal/nrf_power.h>
 #include <zephyr/sys/printk.h>
 #include <cstring>
 
 namespace esphome::swd_rtt_nrf52 {
+
+// Read only. A bootloader/debugger may already have cleared these bits;
+// zero does not prove a power-on reset, and uncleared bits can accumulate.
+inline void log_reset_status() {
+  const uint32_t reason = NRF_POWER->RESETREAS;
+  ESP_LOGI("swd_rtt_nrf52", "RESETREAS=0x%08lx (raw, may be retained/cleared by bootloader)",
+           static_cast<unsigned long>(reason));
+  ESP_LOGI("swd_rtt_nrf52", "Reset flags: pin=%d watchdog=%d software=%d lockup=%d system_off=%d",
+           (reason & POWER_RESETREAS_RESETPIN_Msk) != 0,
+           (reason & POWER_RESETREAS_DOG_Msk) != 0,
+           (reason & POWER_RESETREAS_SREQ_Msk) != 0,
+           (reason & POWER_RESETREAS_LOCKUP_Msk) != 0,
+           (reason & POWER_RESETREAS_OFF_Msk) != 0);
+}
 
 inline void log_lfclk_status() {
   // Read only: leave clock ownership and startup to Zephyr.
@@ -50,6 +65,7 @@ inline void install_log_bridge(logger::Logger *log) {
     printk("%.*s\n", static_cast<int>(length), message);
   });
   printk("[swd_rtt_nrf52] ESPHome log bridge ready\n");
+  log_reset_status();
   log_lfclk_status();
 }
 

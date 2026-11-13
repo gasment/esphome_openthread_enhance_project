@@ -10,7 +10,12 @@ from esphome.core import CORE, CoroPriority, coroutine_with_priority
 DEPENDENCIES = ["nrf52", "logger"]
 # The installed debug component selects blocking RTT; do not combine the profiles.
 CONFLICTS_WITH = ["debug"]
-CONFIG_SCHEMA = cv.All(cv.Schema({}), cv.only_on_nrf52, cv.only_with_framework("zephyr"))
+CONF_FAULT_DIAGNOSTICS = "fault_diagnostics"
+CONFIG_SCHEMA = cv.All(
+    cv.Schema({cv.Optional(CONF_FAULT_DIAGNOSTICS, default=False): cv.boolean}),
+    cv.only_on_nrf52,
+    cv.only_with_framework("zephyr"),
+)
 
 
 def final_validate(config):
@@ -34,10 +39,10 @@ async def to_code(config):
     log = await cg.get_variable(CORE.config["logger"][CONF_ID])
     cg.add(cg.RawStatement(f"swd_rtt_nrf52::install_log_bridge({log});"))
     # Platform defaults must be emitted before the final RTT Kconfig overrides.
-    CORE.add_job(configure_rtt)
+    CORE.add_job(configure_rtt, config[CONF_FAULT_DIAGNOSTICS])
 
 
-async def configure_rtt():
+async def configure_rtt(fault_diagnostics=False):
     options = {
         "USE_SEGGER_RTT": True,
         "CONSOLE": True,
@@ -48,7 +53,10 @@ async def configure_rtt():
         "SEGGER_RTT_MODE_NO_BLOCK_SKIP": True,
         "SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL": False,
         "LOG": True,
-        "LOG_MODE_DEFERRED": True,
+        # Immediate mode is opt-in for fault investigation: a fatal handler
+        # may reboot before the deferred logging thread can drain its queue.
+        "LOG_MODE_DEFERRED": not fault_diagnostics,
+        "LOG_MODE_IMMEDIATE": fault_diagnostics,
         "LOG_PRINTK": True,
         "LOG_PROCESS_THREAD": True,
         # Wake on the first message, rather than batching 10 messages or
@@ -63,6 +71,19 @@ async def configure_rtt():
         "LOG_BACKEND_RTT_MESSAGE_SIZE": 256,
         "LOG_BACKEND_UART": False,
     }
+    if fault_diagnostics:
+        # Catch a stack crossing before it corrupts a saved return address or
+        # another thread's context. Do not change any thread's stack budget.
+        options.update({
+            "THREAD_NAME": True,
+            "THREAD_STACK_INFO": True,
+            "INIT_STACKS": True,
+            "HW_STACK_PROTECTION": True,
+            "STACK_SENTINEL": True,
+        })
+        # These symbols are only available in deferred mode.
+        for option in ("LOG_PROCESS_THREAD", "LOG_PROCESS_TRIGGER_THRESHOLD", "LOG_BUFFER_SIZE", "LOG_BLOCK_IN_THREAD"):
+            options.pop(option)
     for option, value in options.items():
         zephyr_add_prj_conf(option, value)
 

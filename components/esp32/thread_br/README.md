@@ -84,9 +84,8 @@ esphome upload esphome-thread-br/config.yaml
 分区；官方 Web 静态资源已 gzip 压缩嵌入应用，没有 SPIFFS/Web/RCP 固件分区。
 OTA 与回滚同时更新页面和后端。本组件不刷写 H2。
 
-将 thread_br 放入项目的 external_components，并按需加入 thread_gateway；在 external_components.components 中列出所用组件，不依赖
 原始官方源码目录。可编辑的简体中文页面位于 `thread_br_web/frontend/`，修改页面后
-运行 `python tools/build_web_assets.py` 重新生成随组件分发的 `web_assets.h`；
+运行 `python components/esp32/thread_br/build_web_assets.py` 重新生成随组件分发的 `web_assets.h`；
 此命令只打包 Web 资源，不生成或覆盖 C 接口源码。保留了 Espressif 的 Apache-2.0
 许可证和文件版权声明，`thread_br_web/upstream-sha256.json` 记录输入文件哈希。
 
@@ -107,13 +106,9 @@ OTA 与回滚同时更新页面和后端。本组件不刷写 H2。
 IDF 内部不可恢复的 Spinel 初始化/兼容性错误仍可能触发 panic；本版没有改写
 底层 IDF 的断言和错误策略，也不承诺不兼容或未烧录的 H2 能使 S3 正常运行。
 
-## Thread UDP 接收端
+## 节点业务接入
 
-可选独立组件 thread_gateway（通过 thread_br_id 引用本组件） 提供节点发现、地址 TTL、UDP 状态接收、NVS 注册表和网关 Native API 实体暴露。
-顶部标签栏“网络拓扑”右侧“网关管理”进入 /thread_gateway，沿用原 Basic 认证，按节点管理。
-只读实体可选接入 HA，控制实体仅限 Web 操作；保存清单并确认重启后应用。
-节点端使用 [thread_sed_transporter](../thread_sed_transporter/README.md) 进行手动采样和 UDP 上报。
-配置范围、元数据限制和 UDP v1 协议见 [thread_gateway 说明](../thread_gateway/README.md)。
+节点通过独立 `thread_sed_api` 直连 HA 的 Thread SED 集成；BR 负责 IPv6 路由和 SRP/mDNS 代理。见 [迁移说明](../../../thread_sed/MIGRATION.md)。
 
 ## Dataset 与 ESP32 节点
 
@@ -204,7 +199,6 @@ BR 路由、SRP/DNS-SD、RCP 控制和诊断实体继续工作，`thread_identit
 本组件也不再为 Web 预留 TCP 连接/监听 socket，不主动引入 HTTP 服务端、HTTP 客户端和 JSON 依赖。
 其他 ESPHome 组件若独立使用 HTTP/Web/JSON，仍按其自身需求构建。
 
-`thread_gateway`、启用的 `commissioner`、`ha_url`/`ha_token` 都要求显式配置 `web`；
 缺少时配置校验报错，不会静默忽略。仅配置 `web` 不会自动启用网关或 Commissioner。
 不支持 `web: false`；关闭时删除整个 `web` 配置及其依赖功能配置。
 
@@ -387,9 +381,7 @@ BR 同时对构建目录的 `mle_ftd.cpp` 副本加入实验性 Joiner Advertise
 
 ## 组件名称和管理页裁剪
 
-顶层配置使用 `thread_br:`；网关通过 `thread_gateway.thread_br_id` 绑定 BR。组件目录、命名空间、日志标签和本地 IDF 辅助模块已统一改名，不提供旧名称兼容。目前实现仍要求 ESP32-S3 + ESP-IDF，其他平台仅在规划中。
 
-仅配置 thread_br 时，自动关闭内部 CONFIG_THREAD_BR_GATEWAY_WEB 构建开关：固件不包含 /thread_gateway 页面、专用脚本或网关 API 路由，共用导航不显示入口，也不查询网关状态。配置 thread_gateway 后才编译这些内容，标签名称为“网关管理”。开关由配置自动确定，不是用户配置项。修改 frontend 后仍需运行 tools/build_web_assets.py；生成头文件同时包含两种受条件编译保护的资源分支。
 
 ## RCP 引脚与连接诊断
 
@@ -415,7 +407,6 @@ thread_br:
 
 ### Thread 与基础网络独立运行
 
-Thread/RCP 初始化不等待 Wi-Fi 连接。Thread 附着后，`thread_gateway` 即可进行
 Thread 内部 UDP 发现、上报、ACK 和控制，不依赖 Wi-Fi、HA 或互联网。
 Wi-Fi STA 接口仍由 ESPHome 创建，当前配置仍要求包含 Wi-Fi 组件。
 
@@ -440,3 +431,5 @@ DEBUG 日志 `br_web_memory` 记录 `topology begin`、`topology TLV released`�
 包括内部空闲堆、最大连续块、PSRAM 空闲量，以及原始 TLV 临时分配余额。
 完成时 `diagnostic_live=0 bytes/0 blocks` 表示原始 TLV 已全部释放，不代表 HTTP/TCP 网络缓冲也已回收。
 日志另外显示 HTTP 仍打开的客户端数。比较多次刷新以及关闭页面后的稳定读数，才能区分连接驻留和持续泄漏。
+
+节点接入已迁移到 HA 的 [Thread SED](../../../thread_sed/README.md) 集成；BR 不再编译业务网关或网关 Web 资源。
