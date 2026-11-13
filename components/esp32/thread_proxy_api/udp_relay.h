@@ -29,7 +29,7 @@ class UdpRelay {
 #ifdef USE_THREAD_PROXY_UDP_ENCRYPTION
   void set_key(const std::array<uint8_t,32> &key);
 #endif
-  void add_seed(const std::string &address);
+  bool request_schema(const std::string &mac);
   bool setup();
   void stop() { stopping_ = true; }
   bool ready() const { return ready_; }
@@ -55,10 +55,10 @@ class UdpRelay {
   void process_(Datagram &packet);
   bool accept_(const uint8_t *header, const uint8_t *body, size_t size);
   bool send_(uint8_t kind, const uint8_t *header, const uint8_t *body, size_t size, const otMessageInfo &peer);
-  void discover_();
+  void schema_requests_();
   Node *node_(const otIp6Address &address, uint16_t port);
   ThreadProxyAPI *owner_;
-  QueueHandle_t incoming_{nullptr};
+  QueueHandle_t incoming_{nullptr}, requests_{nullptr};
   SemaphoreHandle_t mutex_{nullptr};
   otUdpSocket socket_{};
   bool opened_{false}, encrypted_{false};
@@ -71,7 +71,6 @@ class UdpRelay {
   std::vector<Assembly> assemblies_;
   std::deque<Receipt> receipts_;
   std::vector<Node> nodes_;
-  std::vector<otIp6Address> seeds_;
   std::array<uint8_t,8> boot_{};
   uint32_t sequence_{0}, delivery_{0}, bytes_{0};
   uint32_t max_bytes_{131072};

@@ -126,7 +126,7 @@ class PacketHub:
             if self.receipts[identity] != digest:
                 raise ValueError("conflicting_delivery")
             self.duplicates += 1
-            return
+            return False
         frames = packet.frames() if packet.kind == 2 else []
         # Decode before committing a receipt. Malformed protobuf is never ACKed
         # as successfully handled by the HA ingress layer.
@@ -187,6 +187,8 @@ class PacketHub:
             if len(self.event_tokens) > 2048:
                 self.event_tokens.popitem(last=False)
             self.publish("thread_proxy_node_event", {"mac":packet.mac,"key":int(key),"event_type":event_type,"token":token})
+
+        return True
 
     def snapshot(self):
         return {"received":self.received, "duplicates":self.duplicates,

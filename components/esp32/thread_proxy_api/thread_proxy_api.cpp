@@ -105,6 +105,8 @@ bool ProxyClient::handle_(const ReadPacketBuffer &packet) {
       if(entity=="thread_proxy.uplink" && state=="tsd2-v1") {
         if(owner_->consumer_ && owner_->consumer_!=this) return false;
         owner_->consumer_=this; uplink_=true;
+      } else if(entity=="thread_proxy.request_schema" && owner_->consumer_==this) {
+        owner_->relay_.request_schema(std::string(state));
       } else if((entity=="thread_proxy.delivery_ack" || entity=="thread_proxy.delivery_reject") && owner_->consumer_==this && delivery_part_ && state==delivery_) {
         if(owner_->relay_.acknowledge(std::string(state))) {
           if(entity=="thread_proxy.delivery_reject") ESP_LOGW(TAG,"HA rejected queued node packet %s",delivery_.c_str());

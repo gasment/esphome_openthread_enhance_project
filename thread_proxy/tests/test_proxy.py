@@ -52,6 +52,15 @@ class View:
 module('homeassistant')
 module('homeassistant.config_entries', ConfigFlow=Flow)
 module('homeassistant.helpers')
+class MemoryStore:
+    def __init__(self,hass,version,key):self.hass=hass;self.key=key;self.saved=None
+    async def async_load(self):return getattr(self.hass,'stores',{}).get(self.key)
+    async def async_save(self,data):
+        if not hasattr(self.hass,'stores'):self.hass.stores={}
+        self.hass.stores[self.key]=data;self.saved=data
+    def async_delay_save(self,callback,delay):self.saved=callback()
+module('homeassistant.helpers.storage',Store=MemoryStore)
+
 module('homeassistant.helpers.selector', TextSelector=lambda x:str, TextSelectorConfig=lambda **x:x,
        TextSelectorType=types.SimpleNamespace(PASSWORD='password'))
 module('homeassistant.components')

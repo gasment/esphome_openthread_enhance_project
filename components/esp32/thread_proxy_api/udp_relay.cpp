@@ -6,7 +6,6 @@
 #include "esp_openthread.h"
 #include "esp_openthread_lock.h"
 #include "openthread/thread.h"
-#include "openthread/srp_server.h"
 #include <algorithm>
 #include <cstdio>
 
@@ -30,21 +29,29 @@ void UdpRelay::set_key(const std::array<uint8_t,32> &key) {
   if (!encrypted_) owner_->mark_failed();
 }
 #endif
-void UdpRelay::add_seed(const std::string &address) {
-  otIp6Address ip{};
-  if (otIp6AddressFromString(address.c_str(),&ip)==OT_ERROR_NONE) seeds_.push_back(ip);
+bool UdpRelay::request_schema(const std::string &mac) {
+  if(!requests_ || mac.size()!=12) return false;
+  std::array<uint8_t,6> bytes{};
+  for(size_t i=0;i<12;++i) {
+    const char c=mac[i];
+    const int value=c>='0' && c<='9'?c-'0':c>='a' && c<='f'?c-'a'+10:-1;
+    if(value<0) return false;
+    bytes[i/2]|=value<<(i%2?0:4);
+  }
+  return xQueueSend(requests_,bytes.data(),0)==pdTRUE;
 }
 bool UdpRelay::setup() {
   if (!random_bytes(boot_.data(),boot_.size())) return false;
-  incoming_=xQueueCreate(8,sizeof(Datagram)); mutex_=xSemaphoreCreateMutex();
-  if (!incoming_ || !mutex_) {
+  incoming_=xQueueCreate(8,sizeof(Datagram)); requests_=xQueueCreate(8,6); mutex_=xSemaphoreCreateMutex();
+  if (!incoming_ || !requests_ || !mutex_) {
     if(incoming_) vQueueDelete(incoming_);
+    if(requests_) vQueueDelete(requests_);
     if(mutex_) vSemaphoreDelete(mutex_);
     return false;
   }
   TaskHandle_t task=nullptr;
   if(xTaskCreate(task_,"proxy_udp",6144,this,1,&task)!=pdPASS) {
-    vQueueDelete(incoming_); vSemaphoreDelete(mutex_); return false;
+    vQueueDelete(incoming_); vQueueDelete(requests_); vSemaphoreDelete(mutex_); return false;
   }
   return true;
 }
@@ -59,7 +66,6 @@ void UdpRelay::receive_(void *arg, otMessage *message, const otMessageInfo *peer
 void UdpRelay::task_(void *arg) { static_cast<UdpRelay *>(arg)->run_(); vTaskDelete(nullptr); }
 void UdpRelay::run_() {
   Datagram packet{};
-  uint32_t scanned=millis()-1000;
   while(!stopping_) {
     if(owner_->parent_->is_thread_ready() && esp_openthread_lock_acquire(pdMS_TO_TICKS(10))) {
       auto *instance=esp_openthread_get_instance();
@@ -77,7 +83,7 @@ void UdpRelay::run_() {
     uint32_t now=millis();
     assemblies_.erase(std::remove_if(assemblies_.begin(),assemblies_.end(),[now](const auto &a){return now-a.touched>10000;}),assemblies_.end());
     while(!receipts_.empty() && now-receipts_.front().at>120000) receipts_.pop_front();
-    if(ready_ && now-scanned>=1000) { discover_(); scanned=now; }
+    if(ready_) schema_requests_();
   }
   ready_=false;
   // Never delete a worker while it holds the Thread lock.
@@ -95,7 +101,7 @@ UdpRelay::Node *UdpRelay::node_(const otIp6Address &address, uint16_t port) {
 }
 void UdpRelay::process_(Datagram &packet) {
   auto *h=packet.data; size_t size=packet.size-48;
-  if(memcmp(h,"TSD2",4) || (h[4]!=2 && h[4]!=6 && h[4]!=7) || (h[5]&~3) || bool(h[5]&1)!=encrypted_) return;
+  if(memcmp(h,"TSD2",4) || (h[4]!=2 && h[4]!=6 && h[4]!=7 && h[4]!=8) || (h[5]&~3) || bool(h[5]&1)!=encrypted_) return;
   const unsigned part=u16(h+28), parts=u16(h+30);
   if(!parts || parts>43 || part>=parts) return;
   #ifdef USE_THREAD_PROXY_UDP_ENCRYPTION
@@ -109,11 +115,26 @@ void UdpRelay::process_(Datagram &packet) {
   #endif
   if(size>768 || (part+1<parts && size!=768) || size_t(part)*768+size>32768) return;
   // Remember peers only after authentication/structural validation.
-  if(auto *node=node_(packet.peer.mPeerAddr,packet.peer.mPeerPort)) {
+  Node *known=nullptr;
+  for(auto &candidate:nodes_) if(!memcmp(candidate.mac.data(),h+6,6)) { known=&candidate; break; }
+  if(!known) known=node_(packet.peer.mPeerAddr,packet.peer.mPeerPort);
+  if(auto *node=known) {
+    node->address=packet.peer.mPeerAddr; node->port=packet.peer.mPeerPort;
     memcpy(node->mac.data(),h+6,6); node->last_seen=millis();
     if(h[4]==2 && !(h[5]&2) && memcmp(node->schema.data(),h+32,16)) {
       node->schema.fill(0); node->last_probe=0; // A firmware/schema change needs fresh descriptors even during frequent reporting.
     }
+  }
+  if(h[4]==8) {
+    if(parts!=1 || size || h[5]&2) return;
+    xSemaphoreTake(mutex_,portMAX_DELAY);
+    const bool full=queue_.size()>=max_groups_ || bytes_>=max_bytes_;
+    xSemaphoreGive(mutex_);
+    if(full) return; // Let a BR with queue capacity answer discovery first.
+    uint8_t response[48]; memcpy(response,h,48); memset(response+32,0,16);
+    for(const auto &node:nodes_) if(!memcmp(node.mac.data(),h+6,6)) { memcpy(response+32,node.schema.data(),16); break; }
+    // Reply from this BR's unicast Thread address, never from multicast ff03::1.
+    send_(1,response,h+12,8,packet.peer); return;
   }
   if(h[4]!=2) {
     if(parts!=1 || (h[4]==6 ? size!=4 : size!=0)) return;
@@ -212,6 +233,7 @@ bool UdpRelay::send_(uint8_t kind, const uint8_t *header, const uint8_t *body, s
   bool sent=false;
   if(instance && opened_) {
     otMessageInfo info{}; info.mPeerAddr=peer.mPeerAddr; info.mPeerPort=peer.mPeerPort; info.mSockAddr=peer.mSockAddr; info.mSockPort=6064;
+    if(kind!=3) info.mSockAddr=*otThreadGetMeshLocalEid(instance);
     auto *message=otUdpNewMessage(instance,nullptr);
     if(message) {
       sent=otMessageAppend(message,packet,length)==OT_ERROR_NONE && otUdpSend(instance,&socket_,message,&info)==OT_ERROR_NONE;
@@ -220,42 +242,15 @@ bool UdpRelay::send_(uint8_t kind, const uint8_t *header, const uint8_t *body, s
   }
   esp_openthread_lock_release(); return sent;
 }
-void UdpRelay::discover_() {
-  // Copy SRP endpoints while holding OT; probe outside the lock.
-  if(!esp_openthread_lock_acquire(pdMS_TO_TICKS(10))) return;
-  auto *instance=esp_openthread_get_instance(); otIp6Address local{};
-  if(instance) {
-    local=*otThreadGetMeshLocalEid(instance);
-    const otSrpServerHost *host=nullptr;
-    unsigned count=0;
-    while(count++<64 && (host=otSrpServerGetNextHost(instance,host))) {
-      if(otSrpServerHostIsDeleted(host)) continue;
-      const otSrpServerService *service=nullptr;
-      unsigned services=0;
-      while(services++<32 && (service=otSrpServerHostGetNextService(host,service))) {
-        if(otSrpServerServiceIsDeleted(service) || strncmp(otSrpServerServiceGetServiceName(service),"_thread-sed._udp.",17)) continue;
-        uint8_t n=0; const auto *ips=otSrpServerHostGetAddresses(host,&n);
-        for(unsigned i=0;i<n && i<16;++i) {
-          const uint8_t *b=ips[i].mFields.m8;
-          if(b[0]==0xff || (b[0]==0xfe && (b[1]&0xc0)==0x80)) continue;
-          node_(ips[i],otSrpServerServiceGetPort(service)); break;
-        }
-      }
-    }
-  }
-  esp_openthread_lock_release();
-  if(!instance) return;
-  for(const auto &seed:seeds_) node_(seed,6064);
-  const uint32_t now=millis();
-  unsigned probes=0;
-  for(auto &node:nodes_) {
-    if(node.last_probe && now-node.last_probe<30000) continue;
-    const bool known_schema=std::any_of(node.schema.begin(),node.schema.end(),[](uint8_t byte){ return byte!=0; });
-    if(known_schema && node.last_seen && now-node.last_seen<30000) continue;
-    if(probes++>=2) break;
-    uint8_t header[48]{}; memcpy(header+6,node.mac.data(),6); memcpy(header+32,node.schema.data(),16);
-    otMessageInfo peer{}; peer.mPeerAddr=node.address; peer.mPeerPort=node.port; peer.mSockAddr=local;
-    if(send_(1,header,nullptr,0,peer)) node.last_probe=now;
+void UdpRelay::schema_requests_() {
+  std::array<uint8_t,6> mac{};
+  for(unsigned work=0;work<2 && xQueueReceive(requests_,mac.data(),0)==pdTRUE;++work) {
+    Node *selected=nullptr; const uint32_t now=millis();
+    for(auto &node:nodes_) if(node.mac==mac && (!selected || now-node.last_seen<now-selected->last_seen)) selected=&node;
+    if(!selected) continue;
+    uint8_t header[48]{}; memcpy(header+6,mac.data(),6);
+    otMessageInfo peer{}; peer.mPeerAddr=selected->address; peer.mPeerPort=selected->port;
+    send_(4,header,nullptr,0,peer);
   }
 }
 }  // namespace esphome::thread_proxy_api

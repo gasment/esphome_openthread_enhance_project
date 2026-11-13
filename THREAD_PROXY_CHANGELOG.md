@@ -1,3 +1,18 @@
+# Thread Proxy client 与节点直接建实体（0.8.0）
+
+- 新增 ESP32/nRF52 `thread_proxy_client`，复用原 Native API 实体序列化，移除 TCP/Noise、节点直连 HA 和业务下行；与官方 api / 原 thread_sed_api 互斥。
+- 不发布/查询节点 SRP 服务。节点通过 Thread realm-local DISCOVER 找 BR，BR 返回带 wake 回显的 PROBE；缓存地址仅是候选，确认后才就绪，投递失败/重新入网后重选。
+- 保留手动单个/多个实体 send、auto 批次、ACK 超时/额外重发及原回调作用域；增加 on_ready/on_disconnect，保留 is_ready/can_sleep 和 nRF52 System ON guard、快轮询。
+- HA 从已绑定 BR 收到描述后直接创建设备/只读实体，无节点接入确认和节点 ConfigEntry；按 MAC 聚合，跨 BR 保留身份；schema 更新动态增删，清理只作用于对应节点实体。
+- HA 保存实体描述、普通状态和事件游标；未知 schema 时请 BR 补发描述，首次事件等待实体注册，连续事件逐条发布。BR 设备勾选项不影响节点。
+- 节点仍以 BR RAM 入队 ACK 为成功，不等待 HA 或磁盘；无业务控制下行。BR 重启丢失待转交队列，事件持久化仍有合并写入窗口。
+
+带注释 YAML diff 和完整示例：[客户端迁移说明](components/nrf52/thread_proxy_client/README.md)。配置前缀改为 thread_proxy_client，删除 transport，ACK 配置位置保持；BR 的旧 udp.nodes 如有则删除。
+
+验证：93 项 HA/协议回归，18 项客户端配置/内存代码生成检查，BR 配置检查与 C++ 静态语法/平台源码一致性检查。未运行固件编译，待上板测试首次探测、SED ACK、重配网和多 BR 切换。
+
+---
+
 # Thread Proxy UDP ACK 与 TCP 上行（0.7.0）
 
 - BR 新增 Thread 内部 UDP 6064 接收，沿用 thread_sed_api 的 TSD2、768 字节分片、32768 字节组上限和可选 AES-GCM；与 thread_br 基础功能隔离。

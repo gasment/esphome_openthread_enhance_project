@@ -10,6 +10,7 @@ from .br_device import br_device_enabled, register_br_entities, async_set_br_dev
 from .catalog import Binding, new_binding, is_manager
 from .connection import ProxyConnection
 from .uplink import PacketHub
+from .nodes import NodeRegistry
 from .const import DOMAIN, SERVICE_TYPE, DEFAULT_PORT
 from .models import BRState, Discovery, discovery_host, host_name, api_port, encryption_key
 
@@ -34,6 +35,7 @@ class ProxyManager:
     def __init__(self, hass):
         self.hass = hass
         self.root_entry = None
+        self.nodes = NodeRegistry(hass)
         self.uplink = PacketHub(lambda event, data: self.hass.bus.async_fire(event, data))
         self.bindings = {}
         self.runtimes = {}
@@ -71,6 +73,7 @@ class ProxyManager:
 
     async def setup_root(self, entry):
         self.root_entry = entry
+        await self.nodes.load(entry)
         self.bindings = {record["id"]: Binding.restore(record, entry.entry_id) for record in entry.data.get("bindings", [])}
         for binding in self.bindings.values(): await self.add_entry(binding)
         entry.runtime_data = self
@@ -226,8 +229,12 @@ class ProxyManager:
                 else: self.hass.config_entries.async_update_entry(binding, unique_id=identity)
             return True
         runtime.connection = ProxyConnection(state, binding.data.get("noise_psk", ""), runtime.changed, identify)
-        runtime.connection.packet_handler = self.uplink.accept
+        runtime.connection.packet_handler = self.receive_node
         runtime.task = self.hass.async_create_background_task(runtime.connection.run(), f"Thread Proxy BR {binding.entry_id}")
+
+    def receive_node(self,packet,br_id):
+        if self.uplink.accept(packet,br_id): self.nodes.accept(packet,br_id)
+        return self.nodes.need_schema(packet)
 
     async def stop_connection(self, runtime):
         if runtime.connection is not None: await runtime.connection.close()
@@ -250,11 +257,12 @@ class ProxyManager:
         endpoints = {(entry.data.get("host"), entry.data.get("port", DEFAULT_PORT)) for entry in self.entries()}
         found = [item.public() for item in self.discovered.values() if item.id not in identities and (item.host, item.port) not in endpoints and item.present]
         return {"bound": sorted(bound, key=lambda item: item["name"].casefold()),
-                "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": self.uplink.snapshot()}
+                "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": {**self.uplink.snapshot(),"node_devices":sum(node.info is not None for node in self.nodes.nodes.values()),"node_entities":len(self.nodes.entities)}}
 
     async def unload_root(self):
         async with self.lock:
             for identity in list(self.runtimes): await self.remove_entry(identity)
+            await self.nodes.close()
             self.platforms.clear(); self.bindings.clear(); self.root_entry = None
 
     async def close(self):

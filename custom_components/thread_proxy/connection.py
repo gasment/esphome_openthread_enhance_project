@@ -39,8 +39,10 @@ class ProxyConnection:
                 result = self.uplink.feed(call.data)
                 if result is not None:
                     delivery, packet = result
-                    self.packet_handler(packet, self.state.proxy_id)
+                    need_schema=self.packet_handler(packet, self.state.proxy_id)
                     self.client.send_home_assistant_state("thread_proxy.delivery_ack", None, delivery)
+                    if need_schema:
+                        self.client.send_home_assistant_state("thread_proxy.request_schema", None, packet.mac)
             except (ValueError, TypeError, KeyError) as err:
                 _LOGGER.warning("BR %s uplink rejected: %s", self.state.proxy_id, err)
                 if result is not None:

@@ -1,10 +1,12 @@
 """Separate bound, TCP API connected and proxy verified indicators."""
 from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorDeviceClass
 from .entity import ProxyEntity
+from .node_entity import NodeBinarySensor
 
 async def async_setup_entry(hass, entry, async_add_entities):
     await entry.runtime_data.register_platform("binary_sensor",
                          lambda runtime: [BRFlag(runtime, key) for key in ("bound", "api_connected", "proxy_ready")], async_add_entities)
+    await entry.runtime_data.nodes.register_platform("binary_sensor",NodeBinarySensor,async_add_entities)
 
 class BRFlag(ProxyEntity, BinarySensorEntity):
     def __init__(self, runtime, key):

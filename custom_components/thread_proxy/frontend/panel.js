@@ -35,7 +35,7 @@ class ThreadProxyPanel extends HTMLElement {
       <header><ha-menu-button></ha-menu-button><h1>BR 接入管理</h1><a class="back-link" href="/config/integrations/integration/thread_proxy">返回集成</a></header>
       <main>
         <div class="top"><div><h2>BR 绑定管理</h2><div class="muted counts" id="counts">正在加载…</div></div><div class="actions"><button id="refresh">刷新</button><button id="add" class="primary">手工添加 BR</button></div></div>
-        <div class="note">仅发现启用了 <b>thread_proxy_api</b> 的 BR，确认后才会绑定。支持节点 UDP 本地确认与 TCP 报文上行。节点 ACK 表示 BR 已接收；未转交 HA 的队列会在 BR 重启后丢失。</div>
+        <div class="note">仅发现启用了 <b>thread_proxy_api</b> 的 BR，确认后才会绑定。节点描述经已绑定 BR 到达后，直接创建设备和只读实体。节点 ACK 表示 BR 已接收；未转交 HA 的队列会在 BR 重启后丢失。</div>
         <form id="manual" hidden>
           <label>IP 地址或主机名<input name="host" required autocomplete="off" placeholder="192.168.1.20 或 br.local"></label>
           <label>API 端口<input name="port" type="number" min="1" max="65535" value="6065" required></label>
@@ -86,7 +86,7 @@ class ThreadProxyPanel extends HTMLElement {
   endpoint(item){return `${item.host.includes(":")?`[${item.host}]`:item.host}:${item.port}`;}
   render(data){
     const online=data.bound.filter(x=>x.connected).length;
-    this.shadowRoot.getElementById("counts").textContent=`${data.bound.length} 台已绑定 · ${online} 台 API 在线 · ${data.discovered.length} 台待接入`;
+    this.shadowRoot.getElementById("counts").textContent=`${data.bound.length} 台已绑定 · ${online} 台 API 在线 · ${data.discovered.length} 台待接入 · ${data.uplink?.node_devices??0} 个节点`;
     for(const category of ["bound","discovered"]){
       const container=this.shadowRoot.getElementById(category);container.replaceChildren();
       if(!data[category].length){container.append(this.text("div",category==="bound"?"尚未绑定 BR，可通过自动发现或手工添加接入。":"暂无待接入 BR。","empty"));continue;}

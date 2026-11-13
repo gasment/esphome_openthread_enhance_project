@@ -1,4 +1,4 @@
-# Thread Proxy（0.7.0）
+# Thread Proxy（0.8.0）
 
 面向 Home Assistant 2026.11+ 的 BR 接入管理集成，仅发现声明 `thread_proxy_api` 的 BR，发现后由用户确认接入。ESP32 固件配置见 [BR 组件说明](../components/esp32/thread_proxy_api/README.md)。已提供发现、管理协议、长连接，以及 BR 本地 UDP ACK → RAM 队列 → HA TCP 确认的上行链路。协议及限制见 [上行说明](UPLINK.md)。
 
@@ -37,3 +37,12 @@
 `python -m unittest discover -s thread_proxy/tests -v`：验证使用 HA 轻量替身和真实 aioesphomeapi 会话。集中式迁移、内部绑定重启恢复、注册表范围、重新配置及密钥脱敏已覆盖；不替代实际 HA 2026.11 加载验证。
 
 固件非编译验证入口：`python thread_proxy/validate_firmware.py`。此次仅修改 HA 集成，无需改 BR YAML 或刷固件。[管理协议](PROTOCOL.md)。
+
+
+## 节点直接建实体（0.8.0）
+
+节点使用 [thread_proxy_client](../components/nrf52/thread_proxy_client/README.md)（ESP32 和 nRF52 均提供）。节点不发布 SRP 业务记录；Thread 网内探测 BR 后，通过已绑定 BR 上报描述，HA 直接创建设备及只读实体，没有逐节点发现/接入确认流程。
+
+按节点 MAC 聚合，跨 BR 切换保留设备、实体身份。HA 本地保存描述、普通状态及事件游标，动态处理 schema 增删；首次 KEY EVENT 等待实体注册后发布。BR 诊断设备勾选项不影响节点设备。
+
+需同步更新 BR 固件、HA 集成和节点配置；完整迁移 diff、ACK 配置规则及只读实体映射见客户端说明。未执行固件编译，待上板测试。

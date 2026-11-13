@@ -1,4 +1,4 @@
-# Thread Proxy 上行 v0.7.0
+# Thread Proxy 上行 v0.8.0
 
 本轮实现节点 → BR → HA 的传输闭环。保留现有 `thread_sed_api` UDP 格式和节点手动/自动发送、ACK 超时/重发语义；不要求节点改为 TCP，也没有业务下行控制。
 
@@ -11,13 +11,17 @@
 
 节点 ACK 表示 **BR RAM 已接收**；TCP 确认表示 **HA RAM 已接收**，均非磁盘持久化承诺。BR 重启会丢失队列，HA 重启会丢失接收缓存及去重窗口。需要持久化投递时应另加存储机制，不能把本版 ACK 当作 HA 实体已更新的证明。
 
-## 节点发现与迁移
+## 节点探测和直接建实体（0.8.0）
 
-BR 每秒检查自身 SRP 表中的 `_thread-sed._udp`，从 BR Mesh-Local EID 向节点发送现有 PROBE；可用 `udp.nodes` 补充节点地址。初次探测携带空 schema，节点按原机制回传描述。维护探测至少间隔 30 秒，最近有上报的节点跳过，单轮最多 2 个地址。
+`thread_proxy_client` 不注册/消费节点 SRP 记录，也不依赖 HA 到节点的 IPv6 路由。客户端绑定自身 Thread Mesh-Local 地址，用 TSD2 DISCOVER（kind=8，空载荷）向保存的 BR 候选及 `[ff03::1]:6064` 发起探测，未确认时每秒重试。Realm-local 组播可沿 Thread mesh 转发。
 
-此版**不做跨 BR 的 SRP 服务目录同步或 BR 负载优选**。节点可通过另一 BR 的 PROBE 切换目标，当前在途组仍向原发送目标重传。不会依赖 HA 主机选择节点 OMR 的下一跳来返回 ACK。BR 之间 Thread 无线不可达时，必须由能到达该节点的 BR 探测。旧 Thread SED 集成应停用，避免旧 HA PROBE 抢回节点目标。
+BR 从自身 Mesh-Local EID 返回 PROBE（kind=1），载荷回显节点当前 wake8；节点验证 Thread 前缀、6064端口及回显，选择首个有效 BR。保持当前 BR，投递失败或重新入网后重新探测。BR 队列满时不响应新的探测，允许其他 BR 接管；不是持续按信号强度选优。
 
-节点原有 YAML 可保持不变（UDP 模式、端口 6064）；手动 `send` 成功回调现在表示本地 BR 入队。若节点启用 UDP 加密，在 BR `udp.encryption.key` 配置同一密钥；代理顶层 `encryption.key` 单独保护 BR↔HA TCP。
+节点原来的 HA 直连缓存使用另一 NVS key，不会迁入。新固件需把顶层、send/is_ready/can_sleep 前缀从 thread_sed_api 改为 thread_proxy_client，并删除 transport 配置。
+
+HA 经已绑定 BR 收到描述后直接创建设备/只读实体，不增加节点 ConfigEntry 或接入确认。缺少 schema 时 HA 通过消息40 `thread_proxy.request_schema` 携带节点 MAC，请 BR 转发 SCHEMA（kind=4）；后续补齐描述并回放有界缓存中的状态/事件。描述、普通状态及事件游标由 HA Store 合并保存。
+
+BR 不再扫描 SRP，也不再提供 `udp.nodes` 配置。参与代理的 BR 请先绑定 HA，再更新节点。普通 OpenThread 组件自身的 SRP 功能保持原样，客户端不需要其业务服务记录。
 
 ## TSD2 节点报文
 
@@ -25,7 +29,7 @@ BR 每秒检查自身 SRP 表中的 `_thread-sed._udp`，从 BR Mesh-Local EID �
 
 | 字段 | 内容 |
 |---|---|
-| magic / kind / flags | `TSD2`，DATA=2、ACK=3、SLEEP=6、HEARTBEAT=7；encrypted=1、descriptors=2 |
+| magic / kind / flags | `TSD2`，DATA=2、ACK=3、SLEEP=6、HEARTBEAT=7、DISCOVER=8；encrypted=1、descriptors=2 |
 | MAC / wake | 节点 MAC 6 字节、节点当前 wake 8 字节 |
 | sequence / group | 各 4 字节；sequence 每次实际发送递增，group 重传不变 |
 | part / parts | 各 2 字节；768 字节分片，最多 43 片，完整载荷最大 32768 字节 |
@@ -53,7 +57,7 @@ TCP 内每片最多 384 字节原始载荷（Base64 最多512字符），完整�
 - `thread_proxy_node_event` HA 事件：原 KEY EVENT token 解包得到的 `mac`、`key`、`event_type`、`token`；不会调用任意节点指定的 HA 服务。
 - 接收缓存保留每节点最近描述和最近状态报文，最多64个节点；全局组去重和事件去重各最多2048项。
 
-**本次实现传输及接收缓存，不创建代理节点的 HA 设备/实体，不提供控制实体或业务下行。** 现有“创建设备”仍仅控制 BR 自身诊断，与报文上行独立；后续可直接消费原始 Native API 实体描述完成节点实体映射。
+0.8.0 已直接创建节点设备及只读实体；普通 sensor/binary_sensor/text/event 保留状态，控制类状态投影为只读 sensor/binary_sensor，不提供业务下行。描述变化动态增删实体，HA 重启恢复普通状态和事件游标。现有“创建设备”仍仅控制 BR 自身诊断，与节点实体独立。
 
 ## YAML diff
 
@@ -64,7 +68,6 @@ TCP 内每片最多 384 字节原始载荷（Base64 最多512字符），完整�
 +  udp:
 +    queue_groups: 16      # 完整报文组上限，队列满时不返回成功 ACK
 +    queue_bytes: 131072   # 载荷总字节上限，优先 PSRAM，缓存不跨重启
-+    # nodes: ["fdea:1234::123"] # 无本地 SRP 记录时补充
 +    # encryption:
 +    #   key: !secret node_udp_key # 仅节点 UDP，与顶层 TCP Noise 密钥无关
 ```

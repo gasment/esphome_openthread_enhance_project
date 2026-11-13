@@ -102,11 +102,10 @@ native=base.replace('esp32-s3-devkitc-1','esp32-c6-devkitc-1').replace('''wifi:
 ''','''  backbone: eth
   radio: native
 ''')
-positives['udp_options']=base+f'  udp:\n    queue_groups: 4\n    queue_bytes: 65536\n    nodes: ["fd12:3456::123"]\n    encryption:\n      key: "{key}"\n'
+positives['udp_options']=base+f'  udp:\n    queue_groups: 4\n    queue_bytes: 65536\n    encryption:\n      key: "{key}"\n'
 positives['native_eth']=native
 positives['native_eth_c5']=native.replace('esp32-c6-devkitc-1','esp32-c5-devkitc-1')
 negatives={
- 'udp_bad_address':(base+'  udp:\n    nodes: ["fe80::1"]\n','unicast Thread'),
  'udp_bad_key':(base+'  udp:\n    encryption:\n      key: invalid\n','key'),
  'udp_bad_groups':(base+'  udp:\n    queue_groups: 0\n','queue_groups'),
  'udp_bad_bytes':(base+'  udp:\n    queue_bytes: 100\n','queue_bytes'),
