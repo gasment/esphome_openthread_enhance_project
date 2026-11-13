@@ -1,3 +1,13 @@
+# ACK 提交重试与重复描述合并（2026-11-13）
+
+- 实测日志：21 次 send 均获 BR ACK；4 次用到第二轮重传，未见最终发送失败；不能仅凭这些节点/BR 日志证明 HA 是否全量更新。
+- 修复 BR 获取 OT 锁失败时误报 UDP 未就绪，以及 ACK 本地提交失败后直接放弃的问题；对本地未成功提交的 ACK 使用有界队列重试（每10ms尝试、单轮最多4项、最多等待400ms）。已成功交给 OT 的 ACK 不重复主动发送，空口恢复仍由节点原重传策略负责。
+- 增加 DATA group、接收队列等待、ACK submitted/deferred/expired 及接收 FIFO 丢弃诊断。ACK submitted 仅代表 OT 本地接受，不代表已到节点。
+- ESP32/nRF52 客户端合并同一 BR 的在建/待建描述请求，避免启动时重复 PROBE 导致连续重复描述交换。YAML 的 ack_timeout / ack_resend 语义不变。
+- 未编译固件，待更新 BR 与节点后观察重传率及新诊断；HA 集成无须更新。
+
+---
+
 # Thread Proxy client 与节点直接建实体（0.8.0）
 
 - 新增 ESP32/nRF52 `thread_proxy_client`，复用原 Native API 实体序列化，移除 TCP/Noise、节点直连 HA 和业务下行；与官方 api / 原 thread_sed_api 互斥。

@@ -198,7 +198,14 @@ void ProxyUdpTransport::transmit_() {
   }
 }
 void ProxyUdpTransport::request_schema(const sockaddr_storage *reply_peer,socklen_t reply_length) {
-  requested_schema_peer_=reply_peer?*reply_peer:peer_;
+  const auto &target=reply_peer?*reply_peer:peer_;
+  auto same=[&](const sockaddr_storage &pending) {
+    const auto *a=reinterpret_cast<const sockaddr_in6 *>(&pending);
+    const auto *b=reinterpret_cast<const sockaddr_in6 *>(&target);
+    return a->sin6_family==b->sin6_family && a->sin6_port==b->sin6_port && !memcmp(&a->sin6_addr,&b->sin6_addr,16);
+  };
+  if((schema_requested_ && same(requested_schema_peer_)) || (schema_building_ && same(schema_peer_))) return;
+  requested_schema_peer_=target;
   requested_schema_peer_len_=reply_peer?reply_length:peer_len_;
   schema_requested_=true;
 }

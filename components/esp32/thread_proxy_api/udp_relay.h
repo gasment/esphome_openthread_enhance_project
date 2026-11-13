@@ -38,7 +38,8 @@ class UdpRelay {
   std::shared_ptr<const Group> front();
   bool acknowledge(const std::string &delivery);
  protected:
-  struct Datagram { otMessageInfo peer; uint16_t size; uint8_t data[832]; };
+  struct Datagram { otMessageInfo peer; uint32_t received_at; uint16_t size; uint8_t data[832]; };
+  struct PendingAck { std::array<uint8_t,48> header{}; otMessageInfo peer{}; uint32_t started{0}, attempted{0}; uint16_t attempts{0}; };
   struct Assembly {
     std::array<uint8_t,48> header{};
     otMessageInfo peer{};
@@ -56,6 +57,8 @@ class UdpRelay {
   bool accept_(const uint8_t *header, const uint8_t *body, size_t size);
   bool send_(uint8_t kind, const uint8_t *header, const uint8_t *body, size_t size, const otMessageInfo &peer);
   void schema_requests_();
+  void acknowledge_node_(const uint8_t *header, const otMessageInfo &peer);
+  void retry_acks_();
   Node *node_(const otIp6Address &address, uint16_t port);
   ThreadProxyAPI *owner_;
   QueueHandle_t incoming_{nullptr}, requests_{nullptr};
@@ -69,6 +72,8 @@ class UdpRelay {
   std::atomic<uint16_t> queued_{0}, node_count_{0};
   std::deque<std::shared_ptr<Group>> queue_;
   std::vector<Assembly> assemblies_;
+  std::vector<PendingAck> pending_acks_;
+  std::atomic<uint32_t> receive_drops_{0};
   std::deque<Receipt> receipts_;
   std::vector<Node> nodes_;
   std::array<uint8_t,8> boot_{};

@@ -12,6 +12,7 @@
 namespace esphome::thread_proxy_api {
 static const char *const TAG = "thread_proxy_api.udp";
 static uint16_t u16(const uint8_t *p) { return uint16_t(p[0]) << 8 | p[1]; }
+static uint32_t u32(const uint8_t *p) { return uint32_t(p[0])<<24 | uint32_t(p[1])<<16 | uint32_t(p[2])<<8 | p[3]; }
 static void put32(uint8_t *p, uint32_t n) { for (int i=3; i>=0; --i) { p[i]=n; n>>=8; } }
 static bool identity(const uint8_t *a, const uint8_t *b) {
   // Retries have new sequence numbers; group identity does not.
@@ -42,6 +43,7 @@ bool UdpRelay::request_schema(const std::string &mac) {
 }
 bool UdpRelay::setup() {
   if (!random_bytes(boot_.data(),boot_.size())) return false;
+  pending_acks_.reserve(16);
   incoming_=xQueueCreate(8,sizeof(Datagram)); requests_=xQueueCreate(8,6); mutex_=xSemaphoreCreateMutex();
   if (!incoming_ || !requests_ || !mutex_) {
     if(incoming_) vQueueDelete(incoming_);
@@ -59,15 +61,17 @@ void UdpRelay::receive_(void *arg, otMessage *message, const otMessageInfo *peer
   auto *self=static_cast<UdpRelay *>(arg);
   const uint16_t size=otMessageGetLength(message)-otMessageGetOffset(message);
   if(self->stopping_ || size<48 || size>832) return;
-  Datagram packet{}; packet.peer=*peer; packet.size=size;
-  if(otMessageRead(message,otMessageGetOffset(message),packet.data,size)==size)
-    xQueueSend(self->incoming_,&packet,0);
+  Datagram packet{}; packet.peer=*peer; packet.size=size; packet.received_at=millis();
+  if(otMessageRead(message,otMessageGetOffset(message),packet.data,size)==size &&
+      xQueueSend(self->incoming_,&packet,0)!=pdTRUE) self->receive_drops_.fetch_add(1);
 }
 void UdpRelay::task_(void *arg) { static_cast<UdpRelay *>(arg)->run_(); vTaskDelete(nullptr); }
 void UdpRelay::run_() {
   Datagram packet{};
+  uint32_t reported_drops=0, last_diagnostics=millis();
   while(!stopping_) {
-    if(owner_->parent_->is_thread_ready() && esp_openthread_lock_acquire(pdMS_TO_TICKS(10))) {
+    if(!owner_->parent_->is_thread_ready()) ready_=false;
+    else if(esp_openthread_lock_acquire(pdMS_TO_TICKS(10))) {
       auto *instance=esp_openthread_get_instance();
       if(instance && !opened_) {
         otSockAddr local{}; local.mPort=6064;
@@ -78,9 +82,15 @@ void UdpRelay::run_() {
       }
       ready_=opened_ && instance && otThreadGetDeviceRole(instance)>=OT_DEVICE_ROLE_CHILD;
       esp_openthread_lock_release();
-    } else ready_=false;
+    } // Lock contention does not mean Thread detached. Preserve the last verified role.
     if(xQueueReceive(incoming_,&packet,pdMS_TO_TICKS(10))==pdTRUE) process_(packet);
+    retry_acks_();
     uint32_t now=millis();
+    if(now-last_diagnostics>=5000) {
+      const uint32_t drops=receive_drops_.load();
+      if(drops!=reported_drops) ESP_LOGW(TAG,"UDP receive FIFO dropped %lu datagrams (total=%lu)",static_cast<unsigned long>(drops-reported_drops),static_cast<unsigned long>(drops));
+      reported_drops=drops; last_diagnostics=now;
+    }
     assemblies_.erase(std::remove_if(assemblies_.begin(),assemblies_.end(),[now](const auto &a){return now-a.touched>10000;}),assemblies_.end());
     while(!receipts_.empty() && now-receipts_.front().at>120000) receipts_.pop_front();
     if(ready_) schema_requests_();
@@ -100,6 +110,7 @@ UdpRelay::Node *UdpRelay::node_(const otIp6Address &address, uint16_t port) {
   node_count_=nodes_.size(); return &node;
 }
 void UdpRelay::process_(Datagram &packet) {
+  const uint32_t queue_wait=millis()-packet.received_at;
   auto *h=packet.data; size_t size=packet.size-48;
   if(memcmp(h,"TSD2",4) || (h[4]!=2 && h[4]!=6 && h[4]!=7 && h[4]!=8) || (h[5]&~3) || bool(h[5]&1)!=encrypted_) return;
   const unsigned part=u16(h+28), parts=u16(h+30);
@@ -140,7 +151,13 @@ void UdpRelay::process_(Datagram &packet) {
     if(parts!=1 || (h[4]==6 ? size!=4 : size!=0)) return;
     accept_(h,h+48,size); return; // SLEEP/HEARTBEAT never wait for a node ACK.
   }
-  if(parts==1) { if(accept_(h,h+48,size)) send_(3,h,h+12,8,packet.peer); return; }
+  if(parts==1) {
+    if(accept_(h,h+48,size)) {
+      acknowledge_node_(h,packet.peer);
+      ESP_LOGD(TAG,"DATA accepted group=%lu bytes=%u queue_wait=%lu ms pending=%u",static_cast<unsigned long>(u32(h+24)),unsigned(size),static_cast<unsigned long>(queue_wait),unsigned(queued_.load()));
+    }
+    return;
+  }
   auto it=std::find_if(assemblies_.begin(),assemblies_.end(),[&](const auto &a){return identity(a.header.data(),h) &&
     !memcmp(&a.peer.mPeerAddr,&packet.peer.mPeerAddr,16) && !memcmp(&a.peer.mSockAddr,&packet.peer.mSockAddr,16) && a.peer.mPeerPort==packet.peer.mPeerPort;});
   if(it==assemblies_.end()) {
@@ -159,7 +176,7 @@ void UdpRelay::process_(Datagram &packet) {
   }
   it->touched=millis();
   if(it->mask!=(uint64_t{1}<<parts)-1) return;
-  if(accept_(it->header.data(),it->body.data(),(parts-1)*768+it->final_size)) send_(3,h,h+12,8,packet.peer);
+  if(accept_(it->header.data(),it->body.data(),(parts-1)*768+it->final_size)) acknowledge_node_(h,packet.peer);
   assemblies_.erase(it);
 }
 bool UdpRelay::accept_(const uint8_t *h, const uint8_t *body, size_t size) {
@@ -194,7 +211,7 @@ bool UdpRelay::accept_(const uint8_t *h, const uint8_t *body, size_t size) {
   Receipt receipt{}; memcpy(receipt.header.data(),h,48); receipt.hash=hash; receipt.at=millis();
   receipts_.push_back(receipt); if(receipts_.size()>64) receipts_.pop_front();
   if((h[5]&2) && h[4]==2) for(auto &n:nodes_) if(!memcmp(n.mac.data(),h+6,6)) memcpy(n.schema.data(),h+32,16);
-  ESP_LOGD(TAG,"Queued node group; pending=%u bytes=%u",unsigned(queued_.load()),unsigned(size));
+  ESP_LOGV(TAG,"Queued node group=%lu pending=%u bytes=%u",static_cast<unsigned long>(u32(h+24)),unsigned(queued_.load()),unsigned(size));
   return true;
 }
 std::shared_ptr<const UdpRelay::Group> UdpRelay::front() {
@@ -241,6 +258,42 @@ bool UdpRelay::send_(uint8_t kind, const uint8_t *header, const uint8_t *body, s
     }
   }
   esp_openthread_lock_release(); return sent;
+}
+void UdpRelay::acknowledge_node_(const uint8_t *header,const otMessageInfo &peer) {
+  auto same=[&](const PendingAck &ack) {
+    return identity(ack.header.data(),header) && ack.peer.mPeerPort==peer.mPeerPort &&
+      !memcmp(&ack.peer.mPeerAddr,&peer.mPeerAddr,16) && !memcmp(&ack.peer.mSockAddr,&peer.mSockAddr,16);
+  };
+  auto existing=std::find_if(pending_acks_.begin(),pending_acks_.end(),same);
+  if(send_(3,header,header+12,8,peer)) {
+    if(existing!=pending_acks_.end()) pending_acks_.erase(existing);
+    ESP_LOGD(TAG,"ACK submitted group=%lu",static_cast<unsigned long>(u32(header+24)));
+    return;
+  }
+  if(existing!=pending_acks_.end()) { existing->started=millis(); existing->attempted=millis(); return; }
+  if(pending_acks_.size()>=16) {
+    ESP_LOGW(TAG,"ACK retry queue full group=%lu; node retry required",static_cast<unsigned long>(u32(header+24))); return;
+  }
+  PendingAck ack; memcpy(ack.header.data(),header,48); ack.peer=peer;
+  ack.started=ack.attempted=millis(); ack.attempts=1;
+  pending_acks_.push_back(ack);
+  ESP_LOGD(TAG,"ACK deferred group=%lu; OT lock/socket submission unavailable",static_cast<unsigned long>(u32(header+24)));
+}
+void UdpRelay::retry_acks_() {
+  unsigned work=0;
+  for(auto it=pending_acks_.begin();it!=pending_acks_.end();) {
+    const uint32_t now=millis();
+    if(now-it->started>=400) {
+      ESP_LOGW(TAG,"ACK submission expired group=%lu attempts=%u; accepted data retained",static_cast<unsigned long>(u32(it->header.data()+24)),unsigned(it->attempts));
+      it=pending_acks_.erase(it); continue;
+    }
+    if(work>=4 || now-it->attempted<10) { ++it; continue; }
+    ++work; ++it->attempts; it->attempted=now;
+    if(send_(3,it->header.data(),it->header.data()+12,8,it->peer)) {
+      ESP_LOGD(TAG,"ACK submitted group=%lu after %u attempts, %lu ms",static_cast<unsigned long>(u32(it->header.data()+24)),unsigned(it->attempts),static_cast<unsigned long>(millis()-it->started));
+      it=pending_acks_.erase(it);
+    } else ++it;
+  }
 }
 void UdpRelay::schema_requests_() {
   std::array<uint8_t,6> mac{};
