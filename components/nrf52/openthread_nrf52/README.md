@@ -311,3 +311,23 @@ thread_manual_keep_alive 脚本供 SED 时调用，未自动创建定时任务�
 - 明确保活边界：System ON 应用休眠不停止 OT 调度；Poll 刷新父节点的 Child Timeout，父节点有效安全下行刷新 SED 的监督计时，单纯 MAC ACK 不算监督确认。监督超时先启动 MLE 验证，后续失败再由 OT 恢复附着。
 - 本轮讨论的运行策略为 `poll_period: 25min`、`child_timeout: 1h`、监督 `interval: 2min`、`check_timeout: 35min`，周期上报 `30min`。这是参数选择记录，不代表组件默认值或已经改写项目 YAML；GPIO 通信及模式切换可能改变相对时序，不保证每个检查窗口内都有固定两次机会。
 - 已通过 Child Supervision 配置边界、运行时动作内存代码生成，以及休眠、SED 发送相关回归验证；未进行固件编译或上板验证。
+
+
+## 手动重新附着
+
+```yaml
+- deep_sleep_nrf52.prevent: true
+- openthread_nrf52.reattach: openthread_main
+- wait_until:
+    # 使用组件连接标志，避免 binary_sensor 尚未执行下一轮 loop 的旧 ON 状态。
+    condition:
+      lambda: return id(openthread_main).is_connected();
+    timeout: 30s
+- deep_sleep_nrf52.prevent: false
+```
+
+也支持 `openthread_nrf52.reattach: {id: openthread_main}`。支持 MTD/FTD，主要用于移动电池节点连续通信失败后的主动恢复；FTD 路由器执行时也会断开现有连接。
+
+动作在 OT 锁下停止 Thread，只删除 `OT_SETTINGS_KEY_PARENT_INFO`，重新启用 Thread 并通过 `otThreadBecomeDetached()` 清除 RAM 中旧父节点/RLOC，发起完整附着。保留 Active/Pending Dataset、NetworkInfo 中的网络身份及安全帧计数器、SLAAC/SRP 和应用设置；不重启 MCU，不执行 Joiner 或恢复出厂。
+
+动作完成只表示已发起恢复，连接异步完成，超时后须自行判断是否继续发送。动作不自动阻止休眠，不修改 poll_period，也不保证选中不同父节点。未初始化、锁繁忙、正在关闭/配网、缺少完整 Dataset 或 IPv6 已关闭时跳过并告警；存储删除失败会尝试恢复原 Thread 启用状态。建议连续失败后调用并限制调用频率，避免反复扫描和 Flash 写入。
