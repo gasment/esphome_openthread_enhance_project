@@ -64,7 +64,7 @@ bool ThreadProxyClient::sed_begin_batch(const void *owner, uint32_t timeout, uin
   // Event::trigger() runs on_event automations BEFORE ControllerRegistry
   // notifies this API. Capture the batch in sed_batch_tick(), after the current
   // callback stack has returned and the triggering event has been enqueued.
-  ESP_LOGD("thread_proxy_client", "send %s started", this->sed_batch_token_.c_str());
+  ESP_LOGV("thread_proxy_client", "send %s started", this->sed_batch_token_.c_str());
   return true;
 }
 
@@ -80,7 +80,7 @@ void ThreadProxyClient::sed_cancel_batch(const void *owner) {
   this->sed_batch_done_ = nullptr;
   this->sed_batch_client_ = nullptr;
   this->sed_batch_owner_ = nullptr;
-  ESP_LOGD("thread_proxy_client", "send cancelled");
+  ESP_LOGV("thread_proxy_client", "send cancelled");
 }
 
 void ThreadProxyClient::sed_finish_batch(bool success, const char *reason) {
@@ -98,8 +98,10 @@ void ThreadProxyClient::sed_finish_batch(bool success, const char *reason) {
         std::remove_if(this->sed_events_.begin(), this->sed_events_.end(),
                        [this](const SedEvent &event) { return event.sequence <= this->sed_batch_cutoff_ && this->sed_batch_wants(event.entity); }),
         this->sed_events_.end());
-    ESP_LOGD("thread_proxy_client", "send %s ACK in %u ms", this->sed_batch_token_.c_str(),
-             static_cast<unsigned>(millis() - this->sed_batch_started_));
+    const auto &delivery=this->udp_.last_delivery();
+    ESP_LOGD("thread_proxy_client", "send ACK: %u ms, %u B, rounds=%u, group=%u",
+             static_cast<unsigned>(millis()-this->sed_batch_started_),unsigned(delivery.bytes),
+             unsigned(delivery.rounds),unsigned(delivery.group));
   } else {
     ESP_LOGW("thread_proxy_client", "send %s failed: %s", this->sed_batch_token_.c_str(), reason);
   }
@@ -123,7 +125,7 @@ void ThreadProxyClient::sed_batch_tick() {
     this->sed_batch_cutoff_=this->sed_event_sequence_;
     this->sed_batch_snapshot_started_=true;
     this->sed_batch_client_->sed_begin_snapshot(this->sed_batch_entities_.empty()?nullptr:&this->sed_batch_entities_);
-    ESP_LOGD("thread_proxy_client","send snapshot: event cutoff=%u",static_cast<unsigned>(this->sed_batch_cutoff_));
+    ESP_LOGV("thread_proxy_client","send snapshot: event cutoff=%u",static_cast<unsigned>(this->sed_batch_cutoff_));
     return;
   }
   if (this->sed_batch_marker_sent_) {

@@ -22,6 +22,8 @@ class ThreadProxyClient;
 class APIConnection;
 class ProxyUdpTransport {
  public:
+  struct DeliveryStats { uint32_t group{0}, bytes{0}; uint16_t rounds{0}; };
+  const DeliveryStats &last_delivery() const { return last_delivery_; }
   explicit ProxyUdpTransport(ThreadProxyClient *owner) : owner_(owner) {}
   void setup(uint16_t port);
   void loop();
@@ -77,6 +79,7 @@ class ProxyUdpTransport {
   std::vector<uint8_t> staging_, tx_;
   std::vector<uint8_t> paused_tx_;
   std::string tx_control_;
+  DeliveryStats last_delivery_;
   std::string paused_control_;
   uint32_t paused_group_{0};
   uint8_t tx_flags_{0};

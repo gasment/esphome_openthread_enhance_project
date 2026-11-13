@@ -257,7 +257,7 @@ class ProxyManager:
         endpoints = {(entry.data.get("host"), entry.data.get("port", DEFAULT_PORT)) for entry in self.entries()}
         found = [item.public() for item in self.discovered.values() if item.id not in identities and (item.host, item.port) not in endpoints and item.present]
         return {"bound": sorted(bound, key=lambda item: item["name"].casefold()),
-                "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": {**self.uplink.snapshot(),"node_devices":sum(node.info is not None for node in self.nodes.nodes.values()),"node_entities":len(self.nodes.entities)}}
+                "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": {**self.uplink.snapshot(),"node_devices":sum(node.info is not None and not node.suspended for node in self.nodes.nodes.values()),"node_entities":len(self.nodes.entities)}}
 
     async def unload_root(self):
         async with self.lock:

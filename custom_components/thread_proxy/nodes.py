@@ -44,13 +44,14 @@ class Node:
     cursors: dict=field(default_factory=dict)
     listeners: set=field(default_factory=set)
     last_br: str=""
+    suspended: bool=False
     def changed(self,key=None):
         for listener in tuple(self.listeners): listener(key)
 
 class NodeRegistry:
     def __init__(self,hass):
         self.hass=hass;self.entry=None;self.nodes={};self.platforms={};self.entities={}
-        self.store=None;self.loading=False;self.requests={};self.tasks=set();self.removals={};self.closing=False
+        self.store=None;self.loading=False;self.requests={};self.tasks=set();self.removals={};self.closing=False;self.deleting=set()
 
     async def load(self,entry):
         from homeassistant.helpers.storage import Store
@@ -66,6 +67,7 @@ class NodeRegistry:
                     if len(body)>32768:raise ValueError("oversize_descriptor")
                     self.accept(NodePacket(mac,"00"*8,"00000000",schema,2,2,body),"")
                     node=self.nodes[mac]
+                    node.suspended=bool(record.get("suspended",False))
                     node.cursors={str(k):int(v) for k,v in list(record.get("cursors",{}).items())[-256:]}
                     for item in record.get("states",[])[:512]:
                         data=base64.b64decode(item["body"],validate=True)
@@ -77,7 +79,7 @@ class NodeRegistry:
 
     def dump(self):
         return {"nodes":[{"mac":n.mac,"schema":n.schema,"descriptor":base64.b64encode(n.descriptor).decode(),
-                          "cursors":n.cursors,"states":[{"type":kind,"body":base64.b64encode(body).decode()} for kind,body in n.state_records.values()]}
+                          "suspended":n.suspended,"cursors":n.cursors,"states":[{"type":kind,"body":base64.b64encode(body).decode()} for kind,body in n.state_records.values()]}
                          for n in self.nodes.values() if n.info is not None]}
 
     def save(self):
@@ -96,7 +98,15 @@ class NodeRegistry:
             if len(self.nodes)>=64:raise ValueError("node_capacity_reached")
             node=self.nodes[packet.mac]=Node(packet.mac)
         node.last_br=br_id
-        if packet.kind!=2:return
+        # Cached data alone must not recreate a deliberately removed device.
+        # A new DATA or HEARTBEAT from a live BR reactivates the same identity.
+        reactivated=node.suspended and not self.loading and packet.mac not in self.deleting and packet.kind in (2,7)
+        if reactivated:
+            node.suspended=False
+            self.reconcile(node)
+        if packet.kind!=2:
+            if reactivated:self.save()
+            return
         frames=packet.frames()
         if packet.flags&2:
             info=None;infos={};done=False
@@ -123,7 +133,9 @@ class NodeRegistry:
             for earlier in pending:
                 if earlier.schema==node.schema:self.apply(node,earlier.frames())
         elif node.info is None or packet.schema!=node.schema:
-            node.pending.append(packet);return
+            node.pending.append(packet)
+            if reactivated:self.save()
+            return
         self.apply(node,frames);node.changed();self.save()
 
     def state(self,node,kind,data):
@@ -147,6 +159,7 @@ class NodeRegistry:
             if seq<=node.cursors.get(cursor,-1):continue
             node.cursors[cursor]=seq
             if len(node.cursors)>256:node.cursors.pop(next(iter(node.cursors)))
+            if node.suspended:continue
             entity=self.entities.get((node.mac,*key))
             # Initial platform registration may buffer an event. A deliberately
             # disabled/aborted entity must not replay events when re-enabled.
@@ -160,7 +173,7 @@ class NodeRegistry:
         for node in self.nodes.values():self.reconcile(node)
 
     def reconcile(self,node):
-        if self.closing:return
+        if self.closing or node.suspended or node.mac in self.deleting:return
         desired={(node.mac,*key) for key in node.infos if platform_for(key[0]) in self.platforms}
         for uid,entity in list(self.entities.items()):
             if uid[0]==node.mac and uid not in desired:
@@ -195,9 +208,54 @@ class NodeRegistry:
         if entity_id:registry.async_remove(entity_id)
         return True
 
+    async def remove_device(self,mac,device):
+        """Remove HA registrations, retaining cache and stable registry keys.
+
+        Remove the actual device before releasing the guard: HA's websocket
+        handler explicitly permits this, so an incoming packet cannot recreate
+        entities in the gap before the framework removes their device.
+        """
+        from homeassistant.helpers import device_registry as dr, entity_registry as er
+        node=self.nodes.get(mac)
+        if self.entry is None or self.closing or mac in self.deleting:return False
+        if device.config_entry_id!=self.entry.entry_id or ("thread_proxy",f"node_{mac}") not in device.identifiers:return False
+        devices=dr.async_get(self.hass)
+        if dr.async_entries_for_parent_device(devices,device.id):return False
+        if node is None:
+            node=self.nodes[mac]=Node(mac,suspended=True)
+        was_suspended=node.suspended
+        node.suspended=True;self.deleting.add(mac)
+        completed=False
+        try:
+            pending=[task for uid,task in self.removals.items() if uid[0]==mac]
+            if pending:await asyncio.gather(*pending,return_exceptions=True)
+            for uid,entity in list(self.entities.items()):
+                if uid[0]!=mac:continue
+                if not await self.remove(entity):return False
+                self.entities.pop(uid,None)
+            # Also clear disabled/stale registry entities that have no runtime
+            # object, using this device and owner as the deletion boundary.
+            entities=er.async_get(self.hass)
+            for item in er.async_entries_for_config_entry(entities,self.entry.entry_id):
+                if item.device_id==device.id and item.platform=="thread_proxy" and item.unique_id.startswith(f"node_{mac}_"):
+                    entities.async_remove(item.entity_id)
+            # Events received while removal was in progress are not replayed.
+            node.events.clear()
+            devices.async_remove_device(device.id)
+            completed=True
+            if self.store is not None:await self.store.async_save(self.dump())
+            return True
+        finally:
+            self.deleting.discard(mac)
+            if completed and node.info is None and not node.pending:self.nodes.pop(mac,None)
+            if not completed:
+                node.suspended=was_suspended
+                self.reconcile(node)
+                self.save()
+
     async def close(self):
         self.closing=True
         for task in tuple(self.tasks):task.cancel()
         await asyncio.gather(*self.tasks,return_exceptions=True)
         if self.store is not None:await self.store.async_save(self.dump())
-        self.removals.clear();self.entities.clear();self.platforms.clear();self.nodes.clear();self.requests.clear();self.entry=None;self.store=None
+        self.removals.clear();self.entities.clear();self.platforms.clear();self.nodes.clear();self.requests.clear();self.deleting.clear();self.entry=None;self.store=None

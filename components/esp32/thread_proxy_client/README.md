@@ -122,3 +122,16 @@ BR 上 `thread_proxy_api.udp.encryption.key` 必须使用相同密钥；BR 顶�
 **节点成功 ACK 只表示 BR RAM 已接收，不表示 HA 已更新或已落盘。BR 重启会丢失未转交缓存；HA 异常退出仍存在最近缓存写入窗口，不能承诺事件永久精确一次。**
 
 本次仅运行配置/内存代码生成和协议、实体回归，未编译固件。待上板验证首次探测、SED 快速 ACK、加密、重新配网、BR 失效切换及多跳 Thread。
+
+
+## 精简运行日志
+
+DEBUG 下每次正常发送只保留一条完成摘要：
+
+```text
+[D][thread_proxy_client]: send ACK: 182 ms, 114 B, rounds=1, group=563068012
+```
+
+auto 模式使用 `auto ACK`。耗时从该批次开始计算，含快照序列化及等待 ACK；B 为此次 UDP 组的原始载荷字节，rounds 为实际发送轮数（含首轮），group 可与 BR 日志对应。
+
+发送开始、事件快照截止序号、目标/wake、逐包 ACK、每轮发送及 fast-poll 切换细节改为 VERBOSE；需要逐包排查时将编译日志级别设为 VERBOSE。首次 BR 连接保留 INFO，描述同步完成保留一条 DEBUG 摘要，最终失败保留 WARNING。deep_sleep 的唤醒/休眠和 YAML 自定义 logger.log 来自各自组件/自动化，可按需单独设置级别。

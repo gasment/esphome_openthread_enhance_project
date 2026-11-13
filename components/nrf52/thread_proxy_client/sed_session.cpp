@@ -105,12 +105,12 @@ void ThreadProxyClient::sed_poll(bool fast) {
     if (interval==0 || interval>THREAD_PROXY_CLIENT_FAST_POLL_MS) interval=THREAD_PROXY_CLIENT_FAST_POLL_MS;
     if (current!=interval) {
       if (otLinkSetPollPeriod(instance,interval)!=OT_ERROR_NONE) return;
-      ESP_LOGD("thread_proxy_client","Fast poll: %u -> %u ms",static_cast<unsigned>(current),static_cast<unsigned>(interval));
+      ESP_LOGV("thread_proxy_client","Fast poll: %u -> %u ms",static_cast<unsigned>(current),static_cast<unsigned>(interval));
     }
   } else {
     if (!this->sed_fast_poll_) return;
     if (otLinkSetPollPeriod(instance,this->sed_saved_poll_)!=OT_ERROR_NONE) return;
-    ESP_LOGD("thread_proxy_client","Restore poll: %u ms",static_cast<unsigned>(this->sed_saved_poll_));
+    ESP_LOGV("thread_proxy_client","Restore poll: %u ms",static_cast<unsigned>(this->sed_saved_poll_));
   }
   this->sed_fast_poll_=fast;
 }

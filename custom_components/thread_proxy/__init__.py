@@ -44,3 +44,21 @@ async def async_unload_entry(hass, entry):
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS): return False
     await get_manager(hass).unload_root()
     return True
+
+
+async def async_remove_config_entry_device(hass,config_entry,device_entry):
+    """Allow an individual proxied node to be removed without unbinding its BR."""
+    from .const import DOMAIN
+    from .uplink import hex_value
+    if not is_manager(config_entry) or device_entry.config_entry_id!=config_entry.entry_id:
+        return False
+    manager=get_manager(hass)
+    if manager.root_entry is None or manager.root_entry.entry_id!=config_entry.entry_id:
+        return False
+    identities=[]
+    for domain,value in device_entry.identifiers:
+        if domain!=DOMAIN or not value.startswith("node_"):continue
+        try:identities.append(hex_value(value[5:],12))
+        except ValueError:continue
+    if len(identities)!=1 or {value for domain,value in device_entry.identifiers if domain==DOMAIN}!={f"node_{identities[0]}"}:return False
+    return await manager.nodes.remove_device(identities[0],device_entry)

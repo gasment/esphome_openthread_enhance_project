@@ -1,4 +1,4 @@
-# Thread Proxy（0.8.0）
+# Thread Proxy（0.8.1）
 
 面向 Home Assistant 2026.11+ 的 BR 接入管理集成，仅发现声明 `thread_proxy_api` 的 BR，发现后由用户确认接入。ESP32 固件配置见 [BR 组件说明](../components/esp32/thread_proxy_api/README.md)。已提供发现、管理协议、长连接，以及 BR 本地 UDP ACK → RAM 队列 → HA TCP 确认的上行链路。协议及限制见 [上行说明](UPLINK.md)。
 
@@ -39,10 +39,21 @@
 固件非编译验证入口：`python thread_proxy/validate_firmware.py`。此次仅修改 HA 集成，无需改 BR YAML 或刷固件。[管理协议](PROTOCOL.md)。
 
 
-## 节点直接建实体（0.8.0）
+## 节点直接建实体（0.8.1）
 
 节点使用 [thread_proxy_client](../components/nrf52/thread_proxy_client/README.md)（ESP32 和 nRF52 均提供）。节点不发布 SRP 业务记录；Thread 网内探测 BR 后，通过已绑定 BR 上报描述，HA 直接创建设备及只读实体，没有逐节点发现/接入确认流程。
 
 按节点 MAC 聚合，跨 BR 切换保留设备、实体身份。HA 本地保存描述、普通状态及事件游标，动态处理 schema 增删；首次 KEY EVENT 等待实体注册后发布。BR 诊断设备勾选项不影响节点设备。
 
 需同步更新 BR 固件、HA 集成和节点配置；完整迁移 diff、ACK 配置规则及只读实体映射见客户端说明。未执行固件编译，待上板测试。
+
+
+## 节点设备独立删除与恢复（0.8.1）
+
+可以在 HA 的节点设备页单独删除该设备。集成只移除这个节点的设备/实体注册，保留节点描述、普通状态和事件游标，不影响 BR 绑定及其他节点。BR 的删除仍从“BR 接入管理”操作。
+
+删除状态会保存，HA 重启不会只根据旧缓存自动恢复节点。再次收到该节点的非重复 DATA 或 HEARTBEAT 上报时，会用原稳定 MAC、设备 identifier 和实体 unique_id 恢复注册；通过 HA 的删除记录恢复原 device_id、可用的 entity_id 及用户名称、区域等信息，不产生新的节点身份。仅重传已经接受过的组或旧 SLEEP 提示不触发恢复。
+
+节点仍显示来源为 Thread Proxy 集成，这是 HA 的设备归属关系；各节点是独立主设备，没有挂在 BR 下，不需要逐节点 ConfigEntry。恢复依赖 HA 仍保留原删除记录及原 entity_id 未被其他实体占用。
+
+升级只需更新 HA 集成并重启 HA，无需修改 YAML 或刷写 BR/节点固件。

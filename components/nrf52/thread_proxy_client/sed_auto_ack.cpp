@@ -51,7 +51,9 @@ void ThreadProxyClient::sed_auto_finish(bool success, const char *reason) {
   // Reset all transaction state before executing user automation. A callback
   // can publish another state or request sleep without completing this ID twice.
   if (success) {
-    ESP_LOGD("thread_proxy_client", "auto %s ACK in %u ms", token.c_str(), static_cast<unsigned>(elapsed));
+    const auto &delivery=this->udp_.last_delivery();
+    ESP_LOGD("thread_proxy_client", "auto ACK: %u ms, %u B, rounds=%u, group=%u",
+             unsigned(elapsed),unsigned(delivery.bytes),unsigned(delivery.rounds),unsigned(delivery.group));
     this->sed_auto_ack_trigger_.trigger(token, elapsed, pending);
   } else {
     ESP_LOGW("thread_proxy_client", "auto %s failed: %s", token.c_str(), reason);

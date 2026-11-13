@@ -119,7 +119,12 @@ void ProxyUdpTransport::bind_peer_(const sockaddr_storage &peer,socklen_t length
   if(memcmp(&saved,&saved_,sizeof(saved))!=0) {
     saved_=saved; preference_.save(&saved_);
   }
-  if(!peer_verified_) schema_confirmed_=false;
+  if(!peer_verified_) {
+    schema_confirmed_=false;
+    char address[socket::SOCKADDR_STR_LEN];
+    socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&peer_),peer_len_,address);
+    ESP_LOGI(TAG,"BR connected: [%s]:%u",address,PROXY_PORT);
+  }
   peer_verified_=true;
   owner_->clients_[0]->sed_udp_ready(true);
 }
@@ -141,14 +146,16 @@ bool ProxyUdpTransport::flush(const std::string &control, uint32_t ack_timeout, 
   tx_flags_=schema_building_?2:0;
   tx_peer_=(tx_flags_&2)?schema_peer_:peer_;
   tx_peer_len_=(tx_flags_&2)?schema_peer_len_:peer_len_;
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
   char target[socket::SOCKADDR_STR_LEN];
   socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&tx_peer_),tx_peer_len_,target);
-  ESP_LOGD(TAG,"UDP group=%u target=[%s]:%u wake=%08x%08x",static_cast<unsigned>(tx_group_),target,
+  ESP_LOGV(TAG,"UDP group=%u target=[%s]:%u wake=%08x%08x",static_cast<unsigned>(tx_group_),target,
       ntohs(reinterpret_cast<const sockaddr_in6 *>(&tx_peer_)->sin6_port),
       static_cast<unsigned>(get32(boot_.data())),static_cast<unsigned>(get32(boot_.data()+4)));
-  if(tx_flags_&2) ESP_LOGI(TAG,"Sending descriptors: group=%u bytes=%u fragments=%u",
+  if(tx_flags_&2) ESP_LOGV(TAG,"Sending descriptors: group=%u bytes=%u fragments=%u",
       static_cast<unsigned>(tx_group_),static_cast<unsigned>(tx_.size()),
       static_cast<unsigned>((tx_.size()+CHUNK-1)/CHUNK));
+#endif
   transmit_();
   return true;
 }
@@ -191,7 +198,7 @@ void ProxyUdpTransport::transmit_() {
   if(send_(2,tx_group_,tx_part_,parts,tx_.data()+tx_part_*CHUNK,size,tx_flags_,&tx_peer_,tx_peer_len_)) ++tx_part_;
   if(tx_part_==parts) {
     last_send_=millis(); ++attempts_;
-    ESP_LOGD(TAG,"UDP group=%u round=%u/%u sent; waiting ACK %u ms (port=%u bytes=%u parts=%u)",
+    ESP_LOGV(TAG,"UDP group=%u round=%u/%u sent; waiting ACK %u ms (port=%u bytes=%u parts=%u)",
         static_cast<unsigned>(tx_group_),static_cast<unsigned>(attempts_),static_cast<unsigned>(tx_ack_resend_+1U),
         static_cast<unsigned>(tx_ack_timeout_),ntohs(reinterpret_cast<const sockaddr_in6 *>(&tx_peer_)->sin6_port),
         static_cast<unsigned>(tx_.size()),static_cast<unsigned>(parts));
@@ -221,7 +228,10 @@ void ProxyUdpTransport::fail_(const char *reason) {
     owner_->sed_batch_delivery_error_=reason;
   if(owner_->sed_auto_pending() && control=="batch:"+owner_->sed_auto_token_)
     owner_->sed_auto_error_=reason;
-  ESP_LOGW(TAG,"UDP delivery failed: %s; rediscovering BR",reason);
+  const bool application=(owner_->sed_batch_done_ && control=="batch:"+owner_->sed_batch_token_) ||
+      (owner_->sed_auto_pending() && control=="batch:"+owner_->sed_auto_token_);
+  if(application) ESP_LOGV(TAG,"UDP delivery failed: %s; rediscovering BR",reason);
+  else ESP_LOGW(TAG,"UDP delivery failed: %s; rediscovering BR",reason);
   cancel();
   peer_verified_=false; schema_confirmed_=false; discovery_at_=millis()-1000U;
   owner_->clients_[0]->sed_udp_ready(false);
@@ -256,23 +266,27 @@ void ProxyUdpTransport::receive_() {
     }
     if(count<int(HEADER) || memcmp(packet.data(),"TSD2",4)!=0) continue;
     auto *p=packet.data(); const uint8_t kind=p[4],flags=p[5];
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
     if(kind==3) {
       char source[socket::SOCKADDR_STR_LEN];
       socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,source);
-      ESP_LOGD(TAG,"ACK datagram received: group=%u from=[%s]:%u bytes=%d pending_group=%u",
+      ESP_LOGV(TAG,"ACK datagram received: group=%u from=[%s]:%u bytes=%d pending_group=%u",
           static_cast<unsigned>(get32(p+24)),source,ntohs(reinterpret_cast<const sockaddr_in6 *>(&from)->sin6_port),
           count,static_cast<unsigned>(tx_group_));
     }
+#endif
     if((kind!=1 && kind!=3 && kind!=4) || flags&~3 || get16(p+30)!=1 || get16(p+28)!=0) {
       if(kind==3) ESP_LOGW(TAG,"ACK rejected: invalid flags or fragment fields");
       continue;
     }
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
     if(kind==1) {
       char source[socket::SOCKADDR_STR_LEN];
       socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,source);
-      ESP_LOGI(TAG,"UDP probe received from [%s]:%u (encrypted=%s)",source,
+      ESP_LOGV(TAG,"UDP probe received from [%s]:%u (encrypted=%s)",source,
           ntohs(reinterpret_cast<const sockaddr_in6 *>(&from)->sin6_port),(flags&1)?"YES":"NO");
     }
+#endif
     const bool wildcard=std::all_of(p+6,p+12,[](uint8_t n){return n==0;});
     if(memcmp(p+6,mac_.data(),6)!=0 && !(kind==1 && wildcard)) {
       if(kind==1) ESP_LOGW(TAG,"Probe rejected: target MAC does not match this node");
@@ -341,8 +355,8 @@ void ProxyUdpTransport::receive_() {
     }
     const uint32_t group=get32(p+24);
     if(kind==3) {
-      if(tx_.empty()) { ESP_LOGD(TAG,"ACK ignored: no group pending"); continue; }
-      if(group!=tx_group_) { ESP_LOGD(TAG,"ACK ignored: group=%u expected=%u",static_cast<unsigned>(group),static_cast<unsigned>(tx_group_)); continue; }
+      if(tx_.empty()) { ESP_LOGV(TAG,"ACK ignored: no group pending"); continue; }
+      if(group!=tx_group_) { ESP_LOGV(TAG,"ACK ignored: group=%u expected=%u",static_cast<unsigned>(group),static_cast<unsigned>(tx_group_)); continue; }
       if(size!=8) { ESP_LOGW(TAG,"ACK rejected: payload size=%u expected=8",static_cast<unsigned>(size)); continue; }
       if(memcmp(p+HEADER,boot_.data(),8)!=0) {
         ESP_LOGW(TAG,"ACK rejected: wake ID mismatch, got=%08x%08x expected=%08x%08x",
@@ -353,12 +367,14 @@ void ProxyUdpTransport::receive_() {
     }
     if(kind==4) { request_schema(); continue; }
     if(kind==3 && !tx_.empty() && group==tx_group_ && size==8 && memcmp(p+HEADER,boot_.data(),8)==0) {
-      ESP_LOGD(TAG,"UDP group=%u ACK after %u round(s), %u ms since last round",static_cast<unsigned>(group),
+      ESP_LOGV(TAG,"UDP group=%u ACK after %u round(s), %u ms since last round",static_cast<unsigned>(group),
           static_cast<unsigned>(attempts_),static_cast<unsigned>(millis()-last_send_));
       const auto control=tx_control_; const bool schema=(tx_flags_&2)!=0;
+      if(!schema && !control.empty()) last_delivery_={group,static_cast<uint32_t>(tx_.size()),attempts_};
+      if(schema) ESP_LOGD(TAG,"schema ACK: %u ms, %u B, rounds=%u, group=%u",
+          unsigned(millis()-tx_started_),unsigned(tx_.size()),unsigned(attempts_),unsigned(group));
       tx_.clear(); tx_control_.clear();
       if(schema) {
-        ESP_LOGI(TAG,"Descriptor ACK received: group=%u",static_cast<unsigned>(group));
         schema_building_=false; schema_confirmed_=true;
         if(!paused_tx_.empty()) {
           tx_=std::move(paused_tx_); paused_tx_.clear(); tx_group_=paused_group_;
@@ -436,7 +452,7 @@ void ProxyUdpTransport::loop() {
     }
     schema_requested_=false; schema_building_=true;
     schema_peer_=requested_schema_peer_; schema_peer_len_=requested_schema_peer_len_;
-    ESP_LOGI(TAG,"Building entity descriptors for UDP onboarding/sync");
+    ESP_LOGV(TAG,"Building entity descriptors for UDP onboarding/sync");
     client->on_device_info_request(); client->on_subscribe_homeassistant_services_request();
     client->on_list_entities_request();
   }
