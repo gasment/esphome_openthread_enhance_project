@@ -1,6 +1,6 @@
 <!-- ---
 
-Thread Gateway 与四类 Transporter 已升级到不兼容 v1 的公共发现/绑定协议，参见 [逻辑变更与带注释 YAML diff](TRANSPORT_V2_CHANGELOG.md)。
+Thread Gateway 与四类 Transporter 已升级到不兼容 v1 的公共发现/绑定协议，参见 [功能与配置更新日志](CHANGELOG.md)。
 # https://vitepress.dev/reference/default-theme-home-page
 layout: home
 
@@ -28,7 +28,7 @@ features:
  -->
 # ESPHome OpenThread & Thread BR <br>Enhance Project
 
-> **Thread Proxy 0.5.0**：HA 侧 BR 发现、手工绑定及状态管理已提供；ESP32 BR 固件 `thread_proxy_api` 已提供管理协议，节点转发尚待实现，编译及上板测试待执行。安装与迁移见 [Thread Proxy](thread_proxy/README.md)，逻辑变更见 [更新日志](THREAD_PROXY_CHANGELOG.md)。原 Thread SED HA 代码保留在 `thread_sed/legacy_component`。
+> **Thread Proxy**：节点通过 BR 代理接入 HA，支持 UDP 本地 ACK、多 BR 聚合及节点只读实体自动创建。功能与配置迁移见 [更新日志](CHANGELOG.md)。
 
 
 * 此项目基于esphome为底板，依托esphome强大且方便集成的组件架构，拓展原有的OpenThread和OpenThread BR边缘路由功能，使其适应更多使用场景
@@ -42,8 +42,8 @@ features:
 |项目|平台适配|功能|
 | :----------------------------------------------------: | :----------------------------------------------: | :---------------------------------------------: |
 |Thread边界路由|✅ESP32 ❌nRF52|负责Thread内外部的通讯转换|
-|Thread Proxy|HA 2026.11+|BR 发现、绑定与状态管理及 ESP32 管理端；节点转发待实现|
 |Thread节点-API模式|✅ESP32 ✅nRF52|接入Thread网络并直接连接到HA|
+|Thread节点-代理模式|✅ESP32 ✅nRF52|接入Thread网络并通过BR代理转发实体数据到HA|
 |Thread节点-P2P|✅ESP32 ✅nRF52|Thread节点间的应用层点对点通讯|
 |Thread节点-访问LAN/WAN|✅ESP32 ❌nRF52|Thread节点可访问外部网络资源|
 |BR Web 管理台| ✅Docker✅Python|自动发现并集中登录局域网内的BR|
@@ -69,13 +69,16 @@ features:
 ## 使用指导
 参阅文档：https://esphome-openthread-enhance-pj.netlify.app/
 
-## HA 业务网关集成
+## Thread Proxy
 
-独立的 [OpenThread Gateway HA 集成](openthread_gateway/README.md)，提供 v3 IPv6 UDP 后端、人工接入及动态实体管理。ESP32 和 nRF52 SED 已增加 v3 适配（待编译上板），两个 REED transporter 仍待迁移。详见 [SED YAML diff](openthread_gateway/SED_MIGRATION.md)。
+HA 集成位于 `custom_components/thread_proxy`，要求 Home Assistant 2026.11.0 或更新版本。可将本仓库作为 Integration 类型添加到 HACS，或手动复制该目录；安装后重启 HA。
 
-集成运行文件位于 `custom_components/openthread_gateway`，本仓库根目录提供 `hacs.json`，可按 Integration 类型添加到 HACS / Marketplace。安装后重启 HA，再添加 OpenThread Gateway 集成。详见 [安装说明](openthread_gateway/README.md)和[发布说明](openthread_gateway/PUBLISHING.md)。
+BR 使用 [thread_proxy_api](components/esp32/thread_proxy_api/README.md)，节点使用 [thread_proxy_client](components/nrf52/thread_proxy_client/README.md)（[ESP32 版本](components/esp32/thread_proxy_client/README.md)）。在 HA 的“BR 接入管理”中确认发现的 BR，或手工填写 BR 的 LAN 地址与代理 TCP 端口，默认6065。
 
+节点在 Thread 内主动探测 BR，不需要节点 SRP 服务记录或逐个接入确认。HA 收到描述后直接创建只读设备和实体；节点可独立删除，后续上报时按原标识恢复。
 
-## Thread SED（破坏性更新）
+旧 Thread SED / `thread_sed_api` 及 transporter、实体桥接入方式需要迁移，详见 [功能与配置更新日志](CHANGELOG.md)。
 
-旧 transporter、实体桥和 UDP 网关已移除。使用 `thread_sed_api` 与 HA **Thread SED** 集成，见 [迁移说明与 YAML diff](thread_sed/MIGRATION.md)。BR 保留路由、配网和 Web 管理。
+✅
+
+2

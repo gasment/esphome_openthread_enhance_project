@@ -12,7 +12,7 @@
     "panel_custom",
     "zeroconf"
   ],
-  "documentation": "https://github.com/gasment/esphome_openthread_enhance_project/tree/dev/thread_proxy",
+  "documentation": "https://github.com/gasment/esphome_openthread_enhance_project/blob/dev/README.md#thread-proxy",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/gasment/esphome_openthread_enhance_project/issues",

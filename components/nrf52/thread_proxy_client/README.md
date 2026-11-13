@@ -28,7 +28,7 @@ ESP32 / nRF52 Thread 节点的只读上行组件，取代 `thread_sed_api` 的�
 +  # thread_proxy_client.send:
 ```
 
-默认 UDP 6064；BR 的 HA TCP 仍是 6065，不占用 ESPHome API 6053。不能与官方 `api` 或旧 `thread_sed_api` 同时配置。旧组件源码暂保留用于对照，不参与此链路。
+默认 UDP 6064；BR 的 HA TCP 仍是 6065，不占用 ESPHome API 6053。不能与官方 `api` 或旧 `thread_sed_api` 同时配置。旧 `thread_sed_api` 已移除，需要迁移为新组件。
 
 ## 手动发送
 

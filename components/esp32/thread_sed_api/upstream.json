@@ -1,7 +1,0 @@
-{
-  "project": "ESPHome",
-  "version": "2026.10.2",
-  "source": "https://github.com/esphome/esphome/tree/2026.10.2/esphome/components/api",
-  "license": "MIT",
-  "changes": "Independent namespace/defines, optional plaintext or Noise, reverse TCP and bounded application sleep ACK."
-}
