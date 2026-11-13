@@ -30,6 +30,7 @@ class ProxyUdpTransport {
   bool append(uint16_t type, const uint8_t *data, size_t size);
   bool flush(const std::string &control = "", uint32_t ack_timeout = 1000, uint16_t ack_resend = 2);
   bool ready() const { return peer_verified_ && peer_len_ != 0 && socket_ != nullptr && network_connected_; }
+  bool recovering() const { return recovering_; }
   bool schema_confirmed() const { return schema_confirmed_; }
   bool pending() const { return !tx_.empty() || !staging_.empty() || schema_building_ || schema_requested_; }
   void wake();
@@ -52,6 +53,7 @@ class ProxyUdpTransport {
              const sockaddr_storage *destination=nullptr, socklen_t destination_length=0);
   void transmit_();
   void fail_(const char *reason);
+  void recover_(const char *reason);
   ThreadProxyClient *owner_;
   std::unique_ptr<socket::Socket> socket_;
   sockaddr_storage peer_{};
@@ -71,7 +73,9 @@ class ProxyUdpTransport {
   std::array<uint8_t,8> boot_{};
   std::array<uint8_t,16> schema_{};
   uint32_t packet_sequence_{0}, group_{0}, tx_group_{0}, last_send_{0}, tx_started_{0}, staged_at_{0}, schema_request_at_{0};
-  uint16_t attempts_{0};
+  uint16_t attempts_{0}, paused_attempts_{0}, recoveries_{0};
+  bool recovering_{false};
+  uint32_t recovery_started_{0}, schema_started_{0};
   uint32_t tx_ack_timeout_{1000}, paused_ack_timeout_{1000};
   uint16_t tx_ack_resend_{2}, paused_ack_resend_{2};
   uint16_t tx_part_{0};

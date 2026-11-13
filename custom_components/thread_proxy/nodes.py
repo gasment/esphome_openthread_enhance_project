@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 import logging
 from time import monotonic
+from datetime import datetime, UTC
 from aioesphomeapi import api_pb2, model
 from google.protobuf.message import DecodeError
 from aioesphomeapi.core import MESSAGE_TYPE_TO_PROTO
@@ -44,6 +45,9 @@ class Node:
     cursors: dict=field(default_factory=dict)
     listeners: set=field(default_factory=set)
     last_br: str=""
+    last_report_at: str=""
+    last_br_name: str=""
+    last_br_host: str=""
     suspended: bool=False
     def changed(self,key=None):
         for listener in tuple(self.listeners): listener(key)
@@ -51,7 +55,7 @@ class Node:
 class NodeRegistry:
     def __init__(self,hass):
         self.hass=hass;self.entry=None;self.nodes={};self.platforms={};self.entities={}
-        self.store=None;self.loading=False;self.requests={};self.tasks=set();self.removals={};self.closing=False;self.deleting=set()
+        self.store=None;self.loading=False;self.requests={};self.tasks=set();self.removals={};self.closing=False;self.deleting=set();self.source_resolver=lambda identity:{}
 
     async def load(self,entry):
         from homeassistant.helpers.storage import Store
@@ -68,6 +72,8 @@ class NodeRegistry:
                     self.accept(NodePacket(mac,"00"*8,"00000000",schema,2,2,body),"")
                     node=self.nodes[mac]
                     node.suspended=bool(record.get("suspended",False))
+                    for key in ('last_br','last_report_at','last_br_name','last_br_host'):
+                        setattr(node,key,str(record.get(key,''))[:253])
                     node.cursors={str(k):int(v) for k,v in list(record.get("cursors",{}).items())[-256:]}
                     for item in record.get("states",[])[:512]:
                         data=base64.b64decode(item["body"],validate=True)
@@ -79,11 +85,37 @@ class NodeRegistry:
 
     def dump(self):
         return {"nodes":[{"mac":n.mac,"schema":n.schema,"descriptor":base64.b64encode(n.descriptor).decode(),
-                          "suspended":n.suspended,"cursors":n.cursors,"states":[{"type":kind,"body":base64.b64encode(body).decode()} for kind,body in n.state_records.values()]}
+                          "suspended":n.suspended,"last_br":n.last_br,"last_report_at":n.last_report_at,"last_br_name":n.last_br_name,"last_br_host":n.last_br_host,"cursors":n.cursors,"states":[{"type":kind,"body":base64.b64encode(body).decode()} for kind,body in n.state_records.values()]}
                          for n in self.nodes.values() if n.info is not None]}
 
     def save(self):
         if self.store is not None and not self.loading:self.store.async_delay_save(self.dump,1)
+
+    def note_source(self,packet,br_id,notify=True):
+        node=self.nodes.get(packet.mac)
+        if node is None or not br_id or packet.kind not in (2,7):return
+        node.last_br=br_id
+        node.last_report_at=datetime.now(UTC).isoformat()
+        source=self.source_resolver(br_id)
+        node.last_br_name=source.get('name','')
+        node.last_br_host=source.get('host','')
+        if notify:node.changed();self.save()
+
+    def source_info(self,node):
+        current=self.source_resolver(node.last_br) if node.last_br else {}
+        return {'last_br_id':node.last_br or None,
+                'last_br_name':current.get('name') or node.last_br_name or None,
+                'last_br_host':current.get('host') or node.last_br_host or None,
+                'last_report_at':node.last_report_at or None,
+                'last_br_api_connected':current.get('connected')}
+
+    def proxy_changed(self,identity):
+        for node in self.nodes.values():
+            if node.last_br==identity:node.changed()
+
+    def public_nodes(self):
+        return [{'mac':n.mac,'name':n.info.friendly_name or n.info.name or n.mac,**self.source_info(n)}
+                for n in self.nodes.values() if n.info is not None and not n.suspended]
 
     def need_schema(self,packet):
         node=self.nodes.get(packet.mac)
@@ -97,7 +129,7 @@ class NodeRegistry:
         if node is None:
             if len(self.nodes)>=64:raise ValueError("node_capacity_reached")
             node=self.nodes[packet.mac]=Node(packet.mac)
-        node.last_br=br_id
+        if not self.loading:self.note_source(packet,br_id,notify=False)
         # Cached data alone must not recreate a deliberately removed device.
         # A new DATA or HEARTBEAT from a live BR reactivates the same identity.
         reactivated=node.suspended and not self.loading and packet.mac not in self.deleting and packet.kind in (2,7)
@@ -105,7 +137,8 @@ class NodeRegistry:
             node.suspended=False
             self.reconcile(node)
         if packet.kind!=2:
-            if reactivated:self.save()
+            if reactivated or packet.kind==7:
+                node.changed();self.save()
             return
         frames=packet.frames()
         if packet.flags&2:

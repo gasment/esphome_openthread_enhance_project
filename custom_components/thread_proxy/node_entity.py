@@ -44,7 +44,8 @@ class NodeEntity(Entity):
         value=self.value
         attributes=safe(value.to_dict()) if value else {}
         for key in ("key","device_id","state","missing_state"):attributes.pop(key,None)
-        return attributes or None
+        attributes.update(self.registry.source_info(self.node))
+        return attributes
     async def async_prepare_to_add_to_hass(self):
         await super().async_prepare_to_add_to_hass()
         def removed():

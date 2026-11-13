@@ -70,3 +70,9 @@ features:
 参阅文档：https://esphome-openthread-enhance-pj.netlify.app/
 
 
+
+### 查看节点经由哪个 BR 上报
+
+进入 **Thread Proxy → BR 接入管理 → 代理节点 · 最近上报来源**，可查看节点最近经由哪个 BR 转交到 HA；实体属性也提供 `last_br_name`、`last_br_host`、`last_report_at` 等来源信息。此功能只需更新 HA 集成，不修改 BR 或节点。
+
+这里显示的是 HA 最近收到报文的代理 BR，不是节点的 Thread 父节点，也不保证代表此刻的无线连接。来源 BR 的在线状态指 HA 与 BR 的 TCP 连接；首次更新后，需收到新报文才有来源记录。

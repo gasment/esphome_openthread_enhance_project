@@ -101,13 +101,41 @@ bool ProxyUdpTransport::open_socket_() {
   return true;
 }
 void ProxyUdpTransport::reset_delivery_(const char *reason) {
+  if(owner_->sed_batch_done_ || owner_->sed_auto_pending() || !tx_.empty() || !paused_tx_.empty()) {
+    recover_(reason); return;
+  }
   peer_verified_=false; schema_confirmed_=false; discovery_at_=millis()-1000U;
-  // Notify owners in the regular sed_tick() path, never from a network callback.
-  // Their cached events remain available for a later send.
-  if(owner_->sed_batch_done_) owner_->sed_batch_delivery_error_=reason;
-  if(owner_->sed_auto_pending()) owner_->sed_auto_error_=reason;
+  owner_->clients_[0]->sed_cancel_snapshot();cancel();
+}
+void ProxyUdpTransport::recover_(const char *reason) {
+  if(recovering_) return; // Detach + reattach is one recovery, with one deadline.
+  const uint16_t budget=owner_->sed_batch_done_?owner_->sed_batch_resend_:
+      owner_->sed_auto_pending()?owner_->sed_auto_resend_:
+      !paused_tx_.empty()?paused_ack_resend_:tx_ack_resend_;
+  if(++recoveries_>uint32_t(budget)+1U) { fail_("proxy_retry_exhausted"); return; }
+  if(!tx_.empty() && !(tx_flags_&2) && attempts_>tx_ack_resend_) {
+    fail_("ack_timeout");return;
+  }
   owner_->clients_[0]->sed_cancel_snapshot();
-  cancel();
+  // Descriptor sync can temporarily pause an immutable application group.
+  // Retain its bytes, group id, event tokens and consumed send rounds.
+  if(schema_building_ || (tx_flags_&2)) {
+    tx_.clear();tx_control_.clear();
+    if(!paused_tx_.empty()) {
+      tx_=std::move(paused_tx_);paused_tx_.clear();tx_group_=paused_group_;
+      tx_control_=std::move(paused_control_);paused_control_.clear();
+      tx_ack_timeout_=paused_ack_timeout_;tx_ack_resend_=paused_ack_resend_;attempts_=paused_attempts_;
+    }
+  }
+  staging_.clear();schema_building_=false;schema_requested_=false;tx_flags_=0;
+  if(tx_.empty() && owner_->sed_batch_done_ && !owner_->sed_batch_marker_sent_) {
+    owner_->sed_batch_snapshot_started_=false;owner_->sed_batch_event_cursor_=0;
+  }
+  if(owner_->sed_auto_pending() && !owner_->sed_auto_waiting_) owner_->sed_auto_event_cursor_=0;
+  peer_verified_=false;schema_confirmed_=false;recovering_=true;
+  recovery_started_=millis();discovery_at_=millis()-1000U;
+  owner_->clients_[0]->sed_udp_ready(false);
+  ESP_LOGD(TAG,"BR unavailable (%s); retaining pending report and rediscovering",reason);
 }
 void ProxyUdpTransport::bind_peer_(const sockaddr_storage &peer,socklen_t length) {
   peer_=peer; peer_len_=length;
@@ -126,6 +154,10 @@ void ProxyUdpTransport::bind_peer_(const sockaddr_storage &peer,socklen_t length
     ESP_LOGI(TAG,"BR connected: [%s]:%u",address,PROXY_PORT);
   }
   peer_verified_=true;
+  if(recovering_) {
+    if(!tx_.empty()) { tx_peer_=peer_;tx_peer_len_=peer_len_;tx_part_=0;tx_started_=millis(); }
+    recovering_=false;
+  }
   owner_->clients_[0]->sed_udp_ready(true);
 }
 bool ProxyUdpTransport::append(uint16_t type,const uint8_t *data,size_t size) {
@@ -144,6 +176,7 @@ bool ProxyUdpTransport::flush(const std::string &control, uint32_t ack_timeout, 
   tx_ack_timeout_=ack_timeout; tx_ack_resend_=ack_resend;
   tx_control_=control; tx_group_=++group_; attempts_=0; tx_part_=0;
   tx_flags_=schema_building_?2:0;
+  if(!(tx_flags_&2) && !control.empty()) recoveries_=0;
   tx_peer_=(tx_flags_&2)?schema_peer_:peer_;
   tx_peer_len_=(tx_flags_&2)?schema_peer_len_:peer_len_;
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
@@ -218,16 +251,14 @@ void ProxyUdpTransport::request_schema(const sockaddr_storage *reply_peer,sockle
 }
 void ProxyUdpTransport::cancel() {
   staging_.clear(); tx_.clear(); tx_control_.clear(); paused_tx_.clear(); paused_control_.clear();
-  schema_building_=false; schema_requested_=false;
+  schema_building_=false; schema_requested_=false;recovering_=false;recoveries_=0;
 }
 void ProxyUdpTransport::fail_(const char *reason) {
   // Propagate failure to the owning transaction; callbacks run in sed_tick(),
   // after all transport buffers have been released.
   const auto &control=paused_control_.empty()?tx_control_:paused_control_;
-  if(owner_->sed_batch_done_ && control=="batch:"+owner_->sed_batch_token_)
-    owner_->sed_batch_delivery_error_=reason;
-  if(owner_->sed_auto_pending() && control=="batch:"+owner_->sed_auto_token_)
-    owner_->sed_auto_error_=reason;
+  if(owner_->sed_batch_done_) owner_->sed_batch_delivery_error_=reason;
+  if(owner_->sed_auto_pending()) owner_->sed_auto_error_=reason;
   const bool application=(owner_->sed_batch_done_ && control=="batch:"+owner_->sed_batch_token_) ||
       (owner_->sed_auto_pending() && control=="batch:"+owner_->sed_auto_token_);
   if(application) ESP_LOGV(TAG,"UDP delivery failed: %s; rediscovering BR",reason);
@@ -239,8 +270,10 @@ void ProxyUdpTransport::fail_(const char *reason) {
 void ProxyUdpTransport::wake() {
   // A fresh wake nonce rejects commands left in a parent/router queue while
   // the main thread was asleep. It also gives AES-GCM a fresh nonce domain.
-  if (!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }
-  packet_sequence_=0;
+  if(!pending()) {
+    if (!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }
+    packet_sequence_=0;
+  }
   owner_->clients_[0]->sed_udp_ready(ready());
   if (ready() && !owner_->sed_manual_send()) owner_->clients_[0]->on_subscribe_states_request();
 }
@@ -376,11 +409,12 @@ void ProxyUdpTransport::receive_() {
       tx_.clear(); tx_control_.clear();
       if(schema) {
         schema_building_=false; schema_confirmed_=true;
+        if(owner_->sed_auto_pending()) owner_->sed_auto_phase_started_=millis();
         if(!paused_tx_.empty()) {
           tx_=std::move(paused_tx_); paused_tx_.clear(); tx_group_=paused_group_;
           tx_control_=std::move(paused_control_); paused_control_.clear();
           tx_peer_=paused_peer_; tx_peer_len_=paused_peer_len_;
-          tx_ack_timeout_=paused_ack_timeout_; tx_ack_resend_=paused_ack_resend_; tx_flags_=0; attempts_=0; tx_part_=0; tx_started_=millis(); transmit_();
+          tx_ack_timeout_=paused_ack_timeout_; tx_ack_resend_=paused_ack_resend_; tx_flags_=0; attempts_=paused_attempts_; tx_part_=0; tx_started_=millis(); transmit_();
         }
       }
       if(schema && paused_tx_.empty() && tx_.empty() && !owner_->sed_manual_send())
@@ -405,6 +439,7 @@ void ProxyUdpTransport::discover_() {
   send_(8,++group_,0,1,&empty,0,0,&destination,sizeof(*ip));
 }
 void ProxyUdpTransport::loop() {
+  if(recovering_ && millis()-recovery_started_>=owner_->discovery_timeout()) fail_("proxy_discovery_timeout");
   const bool connected=network::is_connected();
   if(connected!=network_connected_) {
     network_connected_=connected;
@@ -413,12 +448,14 @@ void ProxyUdpTransport::loop() {
     owner_->clients_[0]->sed_udp_ready(false);
     socket_retry_at_=millis()-1000U;
     if(connected) {
-      if(!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }
-      packet_sequence_=0;
+      if(tx_.empty() && paused_tx_.empty()) {
+        if(!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }
+        packet_sequence_=0;
+      }
       discovery_at_=millis()-1000U;
-      ESP_LOGI(TAG,"Thread reattached; reopening UDP port %u and resetting unfinished transfers",port_);
+      ESP_LOGI(TAG,"Thread reattached; reopening UDP port %u; pending report retained",port_);
     } else {
-      ESP_LOGI(TAG,"Thread detached; UDP receive context and unfinished transfers cleared");
+      ESP_LOGI(TAG,"Thread detached; UDP receive context reset; pending report retained");
     }
   }
   if(!connected) return;
@@ -447,27 +484,28 @@ void ProxyUdpTransport::loop() {
   if(schema_requested_ && client->sed_flush_ready() && !schema_building_) {
     if(!tx_.empty() && paused_tx_.empty()) {
       paused_tx_=std::move(tx_); tx_.clear(); paused_control_=std::move(tx_control_); paused_group_=tx_group_;
-      paused_ack_timeout_=tx_ack_timeout_; paused_ack_resend_=tx_ack_resend_;
+      paused_ack_timeout_=tx_ack_timeout_; paused_ack_resend_=tx_ack_resend_;paused_attempts_=attempts_;
       paused_peer_=tx_peer_; paused_peer_len_=tx_peer_len_;
     }
-    schema_requested_=false; schema_building_=true;
+    schema_requested_=false; schema_building_=true;schema_started_=millis();
     schema_peer_=requested_schema_peer_; schema_peer_len_=requested_schema_peer_len_;
     ESP_LOGV(TAG,"Building entity descriptors for UDP onboarding/sync");
     client->on_device_info_request(); client->on_subscribe_homeassistant_services_request();
     client->on_list_entities_request();
   }
   client->loop();
+  if(schema_building_ && tx_.empty() && millis()-schema_started_>=5000U) { recover_("schema_stalled");return; }
   if(schema_building_ && tx_.empty() && client->sed_flush_ready()) flush();
   if(!tx_.empty()) {
     const size_t parts=(tx_.size()+CHUNK-1)/CHUNK;
     if(tx_part_<parts) {
       // Only emission stalls use an internal deadline. ACK timing starts when
       // the final fragment has actually reached the socket, on every round.
-      if(millis()-tx_started_>=5000U) fail_("send_stalled");
+      if(millis()-tx_started_>=5000U) recover_("send_stalled");
       else transmit_();
     } else if(millis()-last_send_>=tx_ack_timeout_) {
       if(attempts_<=tx_ack_resend_) {
-        tx_part_=0; tx_started_=millis(); transmit_();
+        recover_("ack_timeout");
       } else fail_("ack_timeout");
     }
   }
