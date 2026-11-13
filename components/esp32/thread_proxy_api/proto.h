@@ -112,4 +112,24 @@ inline bool valid_management_message(const uint8_t *data, size_t size) {
   }
   return true;
 }
+// Called only after valid_management_message(). Last value wins like protobuf.
+inline std::string_view protobuf_text(const uint8_t *data, size_t size, uint32_t field) {
+  std::string_view result;
+  size_t offset=0;
+  while(offset<size) {
+    auto tag=ProtoVarInt::parse(data+offset,size-offset); offset+=tag.consumed;
+    switch(tag.value&7) {
+      case 0: while(offset<size && (data[offset++]&128)) {} break;
+      case 1: offset+=8; break;
+      case 5: offset+=4; break;
+      case 2: {
+        auto length=ProtoVarInt::parse(data+offset,size-offset); offset+=length.consumed;
+        if((tag.value>>3)==field) result=std::string_view(reinterpret_cast<const char *>(data+offset),length.value);
+        offset+=length.value; break;
+      }
+      default: return {};
+    }
+  }
+  return result;
+}
 }  // namespace esphome::thread_proxy_api

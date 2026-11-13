@@ -4,30 +4,15 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "绑定 BR",
-        "description": "请输入配置了 thread_proxy_api 的 BR 地址。允许离线保存。",
-        "data": {
-          "host": "BR 地址",
-          "port": "API 端口",
-          "name": "显示名称",
-          "noise_psk": "API 加密密钥（可选）"
-        }
+        "title": "启用 BR 接入管理",
+        "description": "启用共享管理入口，随后在 BR 接入管理页发现或手工添加代理。各 BR 不创建独立配置条目。"
       },
       "confirm": {
         "title": "接入 {name}",
         "description": "接入位于 {host}:{port} 的 {name}？",
         "data": {
-          "noise_psk": "API 加密密钥（可选）"
-        }
-      },
-      "reconfigure": {
-        "title": "修改 BR 绑定",
-        "description": "省略密钥保留原值；提交空值清除。",
-        "data": {
-          "host": "BR 地址",
-          "port": "API 端口",
-          "name": "显示名称",
-          "noise_psk": "API 加密密钥（可选）"
+          "noise_psk": "API 加密密钥（可选）",
+          "create_device": "创建 BR 本体设备与诊断实体"
         }
       }
     },
@@ -36,12 +21,14 @@
       "invalid_port": "端口应为 1–65535。",
       "invalid_key": "密钥应为 32 字节 Base64。",
       "invalid_input": "输入内容无效。",
-      "already_configured": "这个 BR 已绑定。"
+      "already_configured": "这个 BR 已绑定。",
+      "manager_not_ready": "管理服务尚未就绪，请稍后重试。"
     },
     "abort": {
       "already_configured": "这个 BR 已绑定。",
       "invalid_discovery": "无效的代理公告。",
-      "unsupported_protocol": "不支持此代理协议版本。"
+      "unsupported_protocol": "不支持此代理协议版本。",
+      "binding_added": "BR 已加入接入管理。"
     },
     "initiate_flow": {
       "user": "BR 接入管理"

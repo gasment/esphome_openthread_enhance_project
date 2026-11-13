@@ -25,8 +25,9 @@ def _registry_plan(hass, entry):
     devices = dr.async_get(hass)
     entities = er.async_get(hass)
     identifier = (DOMAIN, entry.entry_id)
+    owner = getattr(entry, "owner_entry_id", entry.entry_id)
     # Do not use an ambiguous global identifier lookup or bulk config-entry removal.
-    own_devices = [device for device in dr.async_entries_for_config_entry(devices, entry.entry_id)
+    own_devices = [device for device in dr.async_entries_for_config_entry(devices, owner)
                    if identifier in device.identifiers]
     for device in own_devices:
         # HA's true child devices cascade on parent deletion. Refuse that cascade;
@@ -35,7 +36,7 @@ def _registry_plan(hass, entry):
         if hasattr(dr, "async_entries_for_parent_device") and dr.async_entries_for_parent_device(devices, device.id):
             raise BrDeviceError("br_device_has_children")
     keys = {f"{entry.entry_id}_{key}" for key in BR_ENTITY_KEYS}
-    own_entities = [entity for entity in er.async_entries_for_config_entry(entities, entry.entry_id)
+    own_entities = [entity for entity in er.async_entries_for_config_entry(entities, owner)
                     if entity.platform == DOMAIN and entity.unique_id in keys]
     return devices, entities, own_devices, own_entities
 
@@ -53,7 +54,7 @@ async def async_set_br_device(hass, entry, enabled=None, *, persist=False):
             for entity in own_entities: entities.async_remove(entity.entity_id)
             for device in own_devices: devices.async_remove_device(device.id)
         if persist:
-            hass.config_entries.async_update_entry(entry, options={**getattr(entry, "options", {}), OPTION: target})
+            _persist_preference(hass, entry, target)
         return
     async with runtime.br_device_lock:
         target = br_device_enabled(entry) if enabled is None else enabled
@@ -83,4 +84,14 @@ async def async_set_br_device(hass, entry, enabled=None, *, persist=False):
             for device in own_devices: devices.async_remove_device(device.id)
             runtime.br_device_enabled = False
         if persist:
-            hass.config_entries.async_update_entry(entry, options={**getattr(entry, "options", {}), OPTION: target})
+            _persist_preference(hass, entry, target)
+
+def _persist_preference(hass, entry, target):
+    from .catalog import Binding
+    if isinstance(entry, Binding):
+        from .manager import get_manager
+        entry.options = {**entry.options, OPTION: target}
+        get_manager(hass).persist()
+    else:
+        # Compatibility with a legacy entry while the startup migration runs.
+        hass.config_entries.async_update_entry(entry, options={**getattr(entry, "options", {}), OPTION: target})

@@ -132,27 +132,23 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         result=await flow.async_step_zeroconf(info)
         self.assertEqual(result['step_id'],'confirm')
         result=await flow.async_step_confirm({})
-        self.assertEqual(result['type'],'create_entry'); self.assertEqual(result['unique_id'],ID)
+        self.assertEqual(result['type'],'create_entry'); self.assertEqual(result['unique_id'],'thread_proxy_manager'); self.assertEqual(result['data']['bindings'][0]['proxy_id'],ID)
     async def test_meshcop_not_discovered(self):
         result=await self.flow().async_step_zeroconf(types.SimpleNamespace(type='_meshcop._udp.local.'))
         self.assertEqual(result['reason'],'invalid_discovery')
     async def test_manual_offline_and_optional_key(self):
         result=await self.flow().async_step_user({'host':'[fd00::1]'})
-        self.assertEqual(result['data']['noise_psk'],''); self.assertEqual(result['data']['binding_source'],'manual')
+        self.assertEqual(result['data']['bindings'][0]['data']['noise_psk'],''); self.assertEqual(result['data']['bindings'][0]['data']['binding_source'],'manual')
     async def test_panel_candidate_identity_preserved(self):
         flow=self.flow(); result=await flow.async_step_user({'host':'br.local','_proxy_id':ID})
-        self.assertEqual(result['unique_id'],ID); self.assertEqual(result['data']['binding_source'],'discovery')
+        self.assertEqual(result['unique_id'],'thread_proxy_manager'); self.assertEqual(result['data']['bindings'][0]['proxy_id'],ID); self.assertEqual(result['data']['bindings'][0]['data']['binding_source'],'discovery')
         self.assertEqual(flow.unique_id_options,{'raise_on_progress':False})
     async def test_duplicate_endpoint_rejected(self):
-        with self.assertRaises(Abort): await self.flow([entry()]).async_step_user({'host':'192.0.2.1','port':6065})
+        result=await self.flow([entry()]).async_step_user({'host':'192.0.2.1','port':6065}); self.assertEqual(result['errors']['base'],'already_configured')
     async def test_duplicate_identity_rejected(self):
-        with self.assertRaises(Abort): await self.flow([entry()]).async_step_user({'host':'other.local','_proxy_id':ID})
-    async def test_reconfigure_key_preserved_or_cleared(self):
-        saved=entry(); flow=self.flow([saved]); flow.entry=saved
-        await flow.async_step_reconfigure({'host':'new.local','name':'New BR'})
-        self.assertEqual(saved.data['noise_psk'],'secret'); self.assertEqual(saved.title,'New BR')
-        await flow.async_step_reconfigure({'host':'new.local','noise_psk':''})
-        self.assertEqual(saved.data['noise_psk'],'')
+        result=await self.flow([entry()]).async_step_user({'host':'other.local','_proxy_id':ID}); self.assertEqual(result['errors']['base'],'already_configured')
+    async def test_reconfigure_is_owned_by_management_page(self):
+        self.assertFalse(hasattr(config.ThreadProxyConfigFlow, 'async_step_reconfigure'))
     async def test_invalid_key_form(self):
         result=await self.flow().async_step_user({'host':'br.local','noise_psk':'bad'})
         self.assertEqual(result['errors']['base'],'invalid_key')
@@ -229,7 +225,8 @@ async def read_varint(reader):
         shift+=7
 
 class Peer:
-    def __init__(self,encrypted=False,metadata=True,identity=ID):
+    def __init__(self,encrypted=False,metadata=True,identity=ID,uplink_frames=None):
+        self.uplink_frames=uplink_frames; self.acks=[]; self.acked=asyncio.Event()
         self.encrypted=encrypted; self.metadata=metadata; self.identity=identity; self.tasks=set(); self.writers=set(); self.connections=0
     def accept(self,reader,writer):
         task=asyncio.create_task(self.handle(reader,writer)); self.tasks.add(task); task.add_done_callback(self.tasks.discard)
@@ -265,7 +262,19 @@ class Peer:
                 elif ident==34 and self.metadata:
                     response=pb.HomeassistantActionRequest(service='thread_proxy.info')
                     for k,v in {'component':'thread_proxy_api','version':'1','id':self.identity,'network_id':'591cbc42f1a3afe5','node_count':'3'}.items(): response.data.add(key=k,value=v)
+                    if self.uplink_frames is not None:
+                        response.data.add(key='uplink_protocol',value='tsd2-v1')
+                        response.data.add(key='data_plane_ready',value='true')
                     await send(35,response)
+                elif ident==40:
+                    state=pb.HomeAssistantStateResponse();state.ParseFromString(raw)
+                    if state.entity_id=='thread_proxy.uplink' and self.uplink_frames is not None:
+                        for values in self.uplink_frames:
+                            packet=pb.HomeassistantActionRequest(service='thread_proxy.packet')
+                            for key,value in values.items():packet.data.add(key=key,value=value)
+                            await send(35,packet)
+                    elif state.entity_id in ('thread_proxy.delivery_ack','thread_proxy.delivery_reject'):
+                        self.acks.append((state.entity_id,state.state)); self.acked.set()
                 elif ident==7: await send(8,pb.PingResponse())
                 elif ident==5: await send(6,pb.DisconnectResponse()); return
         except (asyncio.IncompleteReadError,ConnectionError,asyncio.CancelledError,InvalidTag): pass

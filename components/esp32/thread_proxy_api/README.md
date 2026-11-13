@@ -54,12 +54,32 @@ api:
 - 10 秒握手/订阅时限、60 秒接收空闲时限、每轮限量处理、2048 字节接收帧上限、每连接最多 4 条发送积压；监听失败每 5 秒重试。
 - 没有管理客户端时不会使 BR 重启；不会注册 BR 业务实体、调用 HA 服务或执行控制动作。
 
-**节点 UDP 接收、本地 ACK、消息队列与 HA 上行聚合尚未实现，`data_plane_ready=false`。** 本组件现阶段完成 BR 的接入和连接管理，不能替代已有节点传输。不会给尚未转发的数据返回成功 ACK，也不提供下行控制。
+已增加 Thread 内部 UDP 6064 接收、TSD2 分片重组、可选 AES-GCM、本地队列 ACK，以及通过独立 TCP API 向 HA 转发并等待 HA 确认。`data_plane_ready` 表示 Thread UDP 端点已附着可用。无业务下行控制。
+
+默认无需增加 YAML。自动扫描本 BR 的 SRP `_thread-sed._udp` 服务记录；SRP 注册在其他 BR 时，可用 `udp.nodes` 指定节点 IPv6。探测与 ACK 使用 BR 的 Thread 地址，不经 HA 主机的 IPv6 下一跳路由。请停用旧 Thread SED 集成对同一节点的直连探测，避免它改写节点的目标地址。
+
+```yaml
+thread_proxy_api:
+  thread_br_id: thread_br_main
+  # 下列均可省略；默认 UDP 端口固定为 6064，与当前节点端一致。
+  udp:
+    queue_groups: 16    # 完整报文组数上限，1–128
+    queue_bytes: 131072 # 完整报文载荷总字节上限，32768–1048576
+    # nodes: ["fdea:1234::123"]  # SRP 无法在本 BR 发现时的补充入口
+    # encryption:
+    #   key: !secret node_udp_key # 必须与节点端 encryption.key 一致
+```
+
+UDP 密钥与代理 TCP Noise 密钥相互独立；UDP 首版使用一把共享密钥，未配置时仅接收明文节点。所有接入该 BR 的加密节点必须使用这把 UDP 密钥。
+
+**节点收到 ACK 表示报文已进入 BR 的有界 RAM 队列，不表示 HA 已更新实体。** HA 断线时继续缓存，队列满则不发成功 ACK；BR 断电/重启会丢失待转交报文。载荷缓冲优先使用 PSRAM，另有分片重组、接收队列、工作任务和去重表的内存开销。TCP 重连后使用同一投递标识重传，HA 跨 BR 去重。
+
+本轮 HA 接收到的是原始实体描述、状态及事件记录，并提供接收缓存和 HA 事件；**尚未把代理节点自动创建为 HA 设备/实体**。见 [上行协议及测试清单](../../../thread_proxy/UPLINK.md)。
 
 ## 验证
 
 已在现有 ESPHome 2026.10.2 环境验证 S3 Wi-Fi＋RCP、C5/C6 Ethernet＋native、官方 API 共存及 Noise 组合的配置和内存代码生成，并检查 C++ 静态语法与符号隔离。**按项目要求未运行固件编译，编译及上板测试待用户执行。**
 
-Native 帧缓冲/Noise 辅助代码从本仓库 ESPHome 派生的 `thread_sed_api` 抽取并隔离；没有复制其实体、会话或 UDP 通信逻辑，也没有包含官方 `api/api_pb2.h`。新增轻量 Protobuf 编码仅用于管理消息。
+Native 帧缓冲/Noise 辅助代码从本仓库 ESPHome 派生的 `thread_sed_api` 抽取并隔离；没有复制其实体或会话逻辑；UDP 沿用其 TSD2 报文格式，也没有包含官方 `api/api_pb2.h`。轻量 Protobuf 编码用于管理和报文转发封装。
 
 基础功能优先：仅在 OT 锁空闲时采样，默认每 5 秒更新快照，锁忙时跳过该轮；没有修改 thread_br 的 Dataset、路由、配网或 LED 实现。

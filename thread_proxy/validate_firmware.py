@@ -24,6 +24,10 @@ if len(sys.argv) > 1 and sys.argv[1] == '--one':
     assert ('USE_API' in defines)==('api' in config)
     assert ('USE_THREAD_PROXY_API_NOISE' in defines)==('encryption' in config['thread_proxy_api'])
     assert ('USE_THREAD_PROXY_API_PLAINTEXT' in defines)!=('encryption' in config['thread_proxy_api'])
+    assert ('USE_THREAD_PROXY_UDP_ENCRYPTION' in defines)==('encryption' in config['thread_proxy_api']['udp'])
+    assert 'relay().set_limits' in code
+    if 'encryption' in config['thread_proxy_api']['udp']:
+        assert 'std::array<uint8_t,32>{' in code
     assert 'THREAD_SED_API' not in repr(defines)
     if 'api' in config:
         assert 'api::APIServer' in code
@@ -98,9 +102,14 @@ native=base.replace('esp32-s3-devkitc-1','esp32-c6-devkitc-1').replace('''wifi:
 ''','''  backbone: eth
   radio: native
 ''')
+positives['udp_options']=base+f'  udp:\n    queue_groups: 4\n    queue_bytes: 65536\n    nodes: ["fd12:3456::123"]\n    encryption:\n      key: "{key}"\n'
 positives['native_eth']=native
 positives['native_eth_c5']=native.replace('esp32-c6-devkitc-1','esp32-c5-devkitc-1')
 negatives={
+ 'udp_bad_address':(base+'  udp:\n    nodes: ["fe80::1"]\n','unicast Thread'),
+ 'udp_bad_key':(base+'  udp:\n    encryption:\n      key: invalid\n','key'),
+ 'udp_bad_groups':(base+'  udp:\n    queue_groups: 0\n','queue_groups'),
+ 'udp_bad_bytes':(base+'  udp:\n    queue_bytes: 100\n','queue_bytes'),
  'api_port_collision':(base+'api:\n  port: 6065\n','must differ from api.port'),
  'mdns_disabled':(base+'mdns:\n  disabled: true\n','requires mdns'),
  'bad_key':(base+'  encryption:\n    key: invalid\n','key'),

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include "esphome/core/alloc_helpers.h"
 
 namespace esphome::thread_proxy_api {
 static const char *const TAG = "thread_proxy_api";
@@ -21,7 +22,7 @@ static constexpr uint8_t MAX_PACKETS_PER_LOOP = 8;
 
 ProxyClient::ProxyClient(ThreadProxyAPI *owner, std::unique_ptr<APIFrameHelper> helper)
     : owner_(owner), helper_(std::move(helper)), created_(millis()), last_received_(created_), last_ping_(created_) {}
-ProxyClient::~ProxyClient() { helper_->close(); }
+ProxyClient::~ProxyClient() { if(owner_->consumer_==this) owner_->consumer_=nullptr; helper_->close(); }
 
 bool ProxyClient::send_(uint16_t type, const ManagementMessage &message) {
   if (!message.valid()) return false;
@@ -41,7 +42,10 @@ bool ProxyClient::metadata_(bool initial) {
   message.pair("component", "thread_proxy_api");
   message.pair("version", "1");
   message.pair("id", owner_->proxy_id_);
-  message.pair("data_plane_ready", "false");
+  message.pair("data_plane_ready", owner_->relay_.ready() ? "true" : "false");
+  message.pair("uplink_protocol", "tsd2-v1");
+  message.pair("node_count", std::to_string(owner_->relay_.nodes()));
+  message.pair("queue_size", std::to_string(owner_->relay_.queued()));
   message.pair("thread_available", state.available ? "true" : "false");
   message.pair("thread_attached", state.available && state.role >= OT_DEVICE_ROLE_CHILD ? "true" : "false");
   if (state.available) {
@@ -94,8 +98,23 @@ bool ProxyClient::handle_(const ReadPacketBuffer &packet) {
       subscribed_ = true; last_status_ = millis();
       ESP_LOGD(TAG, "HA subscribed to proxy management");
       return true;
+    case 40: {
+      const auto entity=protobuf_text(packet.data,packet.data_len,1);
+      const auto state=protobuf_text(packet.data,packet.data_len,2);
+      if(!subscribed_) return false;
+      if(entity=="thread_proxy.uplink" && state=="tsd2-v1") {
+        if(owner_->consumer_ && owner_->consumer_!=this) return false;
+        owner_->consumer_=this; uplink_=true;
+      } else if((entity=="thread_proxy.delivery_ack" || entity=="thread_proxy.delivery_reject") && owner_->consumer_==this && delivery_part_ && state==delivery_) {
+        if(owner_->relay_.acknowledge(std::string(state))) {
+          if(entity=="thread_proxy.delivery_reject") ESP_LOGW(TAG,"HA rejected queued node packet %s",delivery_.c_str());
+          delivery_.clear(); delivery_part_=0;
+        }
+      }
+      return true;
+    }
     default:
-      // No action dispatch, state subscription, HA services or node ACK path.
+      // No entity control dispatch.
       return true;
   }
 }
@@ -127,6 +146,39 @@ bool ProxyClient::loop() {
     if (!metadata_(false)) return false;
     last_status_ = now;
   }
+  if(uplink_ && helper_->can_write_without_blocking() && !forward_()) return false;
+  return true;
+}
+
+bool ProxyClient::forward_() {
+  const auto group=owner_->relay_.front();
+  if(!group) return true;
+  const uint16_t parts=std::max(size_t(1),(group->body.size()+383)/384);
+  if(delivery_!=group->delivery) { delivery_=group->delivery; delivery_part_=0; }
+  if(delivery_part_>=parts) {
+    if(millis()-delivery_sent_<5000) return true;
+    delivery_part_=0; // Same token on retry/reconnect; HA deduplicates globally.
+  }
+  const auto *h=group->header.data();
+  auto hex=[](const uint8_t *p,size_t size) {
+    static const char digits[]="0123456789abcdef";
+    std::string value; value.reserve(size*2);
+    for(size_t i=0;i<size;++i) { value+=digits[p[i]>>4]; value+=digits[p[i]&15]; }
+    return value;
+  };
+  const size_t offset=delivery_part_*384;
+  const size_t size=std::min(size_t(384),group->body.size()-offset);
+  const std::string encoded=size ? base64_encode(group->body.data()+offset,size) : std::string{};
+  ManagementMessage message;
+  message.text(1,"thread_proxy.packet");
+  message.pair("delivery",delivery_);
+  message.pair("mac",hex(h+6,6)); message.pair("wake",hex(h+12,8));
+  message.pair("group",hex(h+24,4)); message.pair("schema",hex(h+32,16));
+  message.pair("kind",std::to_string(h[4])); message.pair("flags",std::to_string(h[5]));
+  message.pair("part",std::to_string(delivery_part_)); message.pair("parts",std::to_string(parts));
+  message.pair("payload",encoded);
+  if(!send_(35,message)) return false;
+  ++delivery_part_; delivery_sent_=millis();
   return true;
 }
 
@@ -143,6 +195,7 @@ void ThreadProxyAPI::setup() {
     mark_failed();
     return;
   }
+  if(!relay_.setup()) { ESP_LOGE(TAG,"Cannot start UDP relay"); mark_failed(); return; }
   start_listener_();
 }
 
@@ -241,6 +294,7 @@ ThreadProxyAPI::ThreadSnapshot ThreadProxyAPI::snapshot_() {
 
 void ThreadProxyAPI::on_shutdown() {
   stopping_ = true;
+  relay_.stop();
   clients_.clear();
   if (listener_) { listener_->close(); listener_.reset(); }
   // The worker releases the OT lock and exits itself; never delete it mid-read.
@@ -256,6 +310,7 @@ void ThreadProxyAPI::dump_config() {
   ESP_LOGCONFIG(TAG, "  Encryption: disabled");
 #endif
   ESP_LOGCONFIG(TAG, "  Announcement: _thread-proxy._tcp; status interval: %lu ms", static_cast<unsigned long>(status_interval_));
-  ESP_LOGCONFIG(TAG, "  Node forwarding: not implemented (no UDP ACKs)");
+  ESP_LOGCONFIG(TAG, "  Thread UDP: 6064, local queue ACK, TCP uplink tsd2-v1");
+  ESP_LOGCONFIG(TAG, "  RAM queue: %u groups pending; lost on BR restart", relay_.queued());
 }
 }  // namespace esphome::thread_proxy_api

@@ -4,30 +4,15 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "Bind a BR",
-        "description": "Enter a BR running thread_proxy_api. The binding can be saved while offline.",
-        "data": {
-          "host": "BR address",
-          "port": "API port",
-          "name": "Display name",
-          "noise_psk": "API encryption key (optional)"
-        }
+        "title": "Set up BR access management",
+        "description": "Set up the shared manager, then discover or add BRs on its management page. BRs do not create individual config entries."
       },
       "confirm": {
         "title": "Bind {name}",
         "description": "Bind {name} at {host}:{port}?",
         "data": {
-          "noise_psk": "API encryption key (optional)"
-        }
-      },
-      "reconfigure": {
-        "title": "Reconfigure BR binding",
-        "description": "Omit the key to keep it; submit an empty value to clear it.",
-        "data": {
-          "host": "BR address",
-          "port": "API port",
-          "name": "Display name",
-          "noise_psk": "API encryption key (optional)"
+          "noise_psk": "API encryption key (optional)",
+          "create_device": "Create the BR device and diagnostic entities"
         }
       }
     },
@@ -36,12 +21,14 @@
       "invalid_port": "Port must be between 1 and 65535.",
       "invalid_key": "Key must be 32 bytes encoded as Base64.",
       "invalid_input": "Invalid input.",
-      "already_configured": "This BR is already bound."
+      "already_configured": "This BR is already bound.",
+      "manager_not_ready": "The manager is not ready. Please try again shortly."
     },
     "abort": {
       "already_configured": "This BR is already bound.",
       "invalid_discovery": "Invalid proxy announcement.",
-      "unsupported_protocol": "Unsupported proxy protocol version."
+      "unsupported_protocol": "Unsupported proxy protocol version.",
+      "binding_added": "The BR was added to access management."
     },
     "initiate_flow": {
       "user": "Manage BR access"

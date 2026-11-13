@@ -6,6 +6,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/thread_br/thread_br.h"
 #include "api_frame_helper.h"
+#include "udp_relay.h"
 #ifdef USE_THREAD_PROXY_API_NOISE
 #include "esphome/components/noise/noise.h"
 #endif
@@ -23,6 +24,11 @@ class ProxyClient {
   bool send_(uint16_t type, const ManagementMessage &message);
   bool handle_(const ReadPacketBuffer &packet);
   bool metadata_(bool initial);
+  bool forward_();
+  bool uplink_{false};
+  std::string delivery_;
+  uint16_t delivery_part_{0};
+  uint32_t delivery_sent_{0};
   ThreadProxyAPI *owner_;
   std::unique_ptr<APIFrameHelper> helper_;
   uint32_t created_, last_received_, last_ping_, last_status_{0}, closing_since_{0};
@@ -38,6 +44,7 @@ class ThreadProxyAPI : public Component {
 #ifdef USE_THREAD_PROXY_API_NOISE
   void set_noise_psk(const uint8_t *key) { noise_ctx_.set_psk(key); }
 #endif
+  UdpRelay &relay() { return relay_; }
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -46,6 +53,9 @@ class ThreadProxyAPI : public Component {
 
  protected:
   friend class ProxyClient;
+  friend class UdpRelay;
+  UdpRelay relay_{this};
+  ProxyClient *consumer_{nullptr};
   struct ThreadSnapshot {
     char network_id[17]{};
     char partition_id[9]{};

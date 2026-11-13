@@ -112,6 +112,7 @@ class BRState:
     status: str = "connecting"
     connected: bool = False
     proxy_ready: bool = False
+    data_plane_ready: bool = False
     thread_available: bool | None = None
     thread_attached: bool | None = None
     thread_role: str = ""
@@ -128,7 +129,7 @@ class BRState:
 
     def public(self):
         result = asdict(self)
-        result.update(bound=True, data_plane_ready=False)
+        result.update(bound=True)
         return result
 
 def parse_metadata(data, expected_id):
@@ -141,6 +142,7 @@ def parse_metadata(data, expected_id):
     result = {"network_id": str(data.get("network_id", ""))[:64],
               "partition_id": str(data.get("partition_id", ""))[:32],
               "protocol_version": PROTOCOL_VERSION}
+    result["data_plane_ready"] = data.get("data_plane_ready") == "true" and data.get("uplink_protocol") == "tsd2-v1"
     for key in ("thread_available", "thread_attached"):
         raw = data.get(key)
         if raw is not None and raw not in ("true", "false"):

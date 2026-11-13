@@ -1,6 +1,6 @@
 # Thread Proxy 管理协议 v1
 
-本文是 HA 端已实现的管理接口契约；ESP32 BR 固件 `thread_proxy_api` 已实现此管理协议；编译及上板测试待执行。此处不定义节点报文与队列确认格式。
+本文是 HA 端已实现的管理接口契约；ESP32 BR 固件 `thread_proxy_api` 已实现此管理协议；编译及上板测试待执行。节点报文与队列确认见 [上行协议](UPLINK.md)。
 
 ## 发现
 
@@ -20,16 +20,16 @@ BR 必须随后发送 HomeassistantActionRequest（消息 35，兼容旧命名 H
 {"component":"thread_proxy_api","version":"1","id":"aabbccddeeff","network_id":"591cbc42f1a3afe5","partition_id":"12345678","node_count":"0","queue_size":"0"}
 ```
 
-必填 component/version/id；其他可选。后续通过同类型消息 `service=thread_proxy.status` 更新状态。HA **仅消费元数据，不将任意 service 转发到 HA 服务总线**。收到无关服务消息忽略，不对未知节点业务数据发确认。
+必填 component/version/id；其他可选。后续通过同类型消息 `service=thread_proxy.status` 更新状态。HA 消费管理元数据及声明支持 `tsd2-v1` 的代理报文；不会执行节点提供的 HA service。
 
 HA 等待管理声明 5 秒，未收到则标记 `unsupported / proxy_not_announced`，但接受之后到来的声明。Native API keepalive 15 秒；连接断开采用 2–60 秒退避并加抖动自动重连。发现和手工配置入口使用相同连接逻辑。
 
 固定 BR ID 必须跨重启、地址变化保持不变；API 的 DeviceInfo MAC、TXT id 和声明 id 三者一致。发现协议 v1 不兼容时拒绝发现接入；手工绑定可保存，但显示协议不兼容。
 
-本阶段所有状态响应显式带 `data_plane_ready=false`。将来节点经 BR 上报时，HA 按稳定节点 ID 聚合，不把 BR ID 当节点 ID；跨 BR 去重、缓存持久化和上行提交确认需要另行定义，不能用此处元数据验证冒充消息送达确认。
+固件声明 `uplink_protocol=tsd2-v1`；`data_plane_ready` 表示 Thread UDP 已就绪。节点 MAC 为稳定聚合标识；BR 队列和 HA 接收缓存均为内存缓存，确认语义见上行协议。
 
 ## ESP32 固件管理状态
 
-`thread_available` 与 `thread_attached` 为字符串 `true`/`false`；`thread_role` 为 disabled/detached/child/router/leader。HA 保存为诊断状态属性。网络数据由后台任务读取；短暂 OT 锁竞争保留上次快照，BR 未就绪时清空网络数据。当前没有节点缓存，不发送虚构的 node_count/queue_size 数字。
+`thread_available` 与 `thread_attached` 为字符串 `true`/`false`；`thread_role` 为 disabled/detached/child/router/leader。HA 保存为诊断状态属性。网络数据由后台任务读取；短暂 OT 锁竞争保留上次快照，BR 未就绪时清空网络数据。`node_count` 为已见节点地址数（地址别名可能重复计数），`queue_size` 为待 HA 确认的完整报文组数。
 
 固件每 30 秒（可配置）发送状态，收包空闲 15 秒主动 Ping，60 秒无入站流量关闭连接；未完成 Hello/订阅 10 秒关闭。客户端与固件各自可发起 Ping。服务没有自动重启 BR 的逻辑。若官方 api 同时配置且未被 HA 连接，应显式设置其 reboot_timeout: 0s。

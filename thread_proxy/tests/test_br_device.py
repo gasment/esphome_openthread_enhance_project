@@ -31,6 +31,7 @@ class BrDeviceTests(unittest.IsolatedAsyncioTestCase):
         runtime=fixture.manager_mod.Runtime(saved,fixture.models.BRState(saved.entry_id,'BR','::1',6065),dict(saved.data),br_device_enabled=enabled)
         runtime.connection=types.SimpleNamespace(close=AsyncMock());runtime.task=object()
         manager.runtimes[saved.entry_id]=runtime
+        manager.bindings[saved.entry_id]=saved
         ident=saved.entry_id
         device=lambda key,ids,owner=ident,**extra:types.SimpleNamespace(id=key,identifiers=ids,config_entry_id=owner,**extra)
         hass.devices=Registry([device('br',{('thread_proxy',ident)}),device('node',{('thread_proxy','node-1')},via_device_id='br'),device('other-br',{('thread_proxy','other')},owner='other')])

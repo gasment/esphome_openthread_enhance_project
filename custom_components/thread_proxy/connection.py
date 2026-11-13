@@ -5,6 +5,7 @@ import logging
 import random
 from aioesphomeapi import APIClient, APIConnectionError
 from .const import INFO_SERVICE, STATUS_SERVICE
+from .uplink import UplinkReceiver
 from .models import BRState, now, parse_metadata, proxy_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,6 +21,9 @@ class ProxyConnection:
         self.stopping = asyncio.Event()
         self.disconnected = asyncio.Event()
         self.metadata = asyncio.Event()
+        self.packet_handler = None
+        self.uplink = UplinkReceiver()
+        self.uplink_enabled = False
 
     def update(self, **values):
         for key, value in values.items():
@@ -27,8 +31,23 @@ class ProxyConnection:
         self.changed()
 
     def receive(self, call):
+        if call.service == "thread_proxy.packet":
+            if not self.uplink_enabled or not self.state.proxy_ready or self.packet_handler is None:
+                return
+            result = None
+            try:
+                result = self.uplink.feed(call.data)
+                if result is not None:
+                    delivery, packet = result
+                    self.packet_handler(packet, self.state.proxy_id)
+                    self.client.send_home_assistant_state("thread_proxy.delivery_ack", None, delivery)
+            except (ValueError, TypeError, KeyError) as err:
+                _LOGGER.warning("BR %s uplink rejected: %s", self.state.proxy_id, err)
+                if result is not None:
+                    self.client.send_home_assistant_state("thread_proxy.delivery_reject", None, result[0])
+            return
         if call.service not in (INFO_SERVICE, STATUS_SERVICE):
-            return  # Node frames are not acknowledged by this management release.
+            return
         try:
             values = parse_metadata(call.data, self.state.proxy_id)
         except (ValueError, TypeError) as err:
@@ -41,10 +60,13 @@ class ProxyConnection:
             self.update(status="duplicate_identity", proxy_ready=False, last_error="duplicate_identity")
         else:
             self.update(**values, status="ready", proxy_ready=True, last_seen=now(), last_error=None)
+        if self.state.proxy_ready and self.packet_handler is not None and call.data.get("uplink_protocol") == "tsd2-v1" and not self.uplink_enabled:
+            self.client.send_home_assistant_state("thread_proxy.uplink", None, "tsd2-v1")
+            self.uplink_enabled = True
         self.metadata.set()
 
     async def stopped(self, expected):
-        self.update(connected=False, proxy_ready=False, connected_since=None)
+        self.update(connected=False, proxy_ready=False, data_plane_ready=False, connected_since=None)
         self.disconnected.set()
 
     async def run(self):
@@ -52,6 +74,8 @@ class ProxyConnection:
         while not self.stopping.is_set():
             self.disconnected.clear()
             self.metadata.clear()
+            self.uplink = UplinkReceiver()
+            self.uplink_enabled = False
             self.update(status="connecting", connected=False, proxy_ready=False, last_error=None)
             client = self.client_factory(self.state.host, self.state.port,
                                          noise_psk=self.key or None, client_info="Thread Proxy", keepalive=15)
@@ -91,7 +115,7 @@ class ProxyConnection:
                 except (APIConnectionError, OSError):
                     pass
                 self.client = None
-                self.update(connected=False, proxy_ready=False, connected_since=None)
+                self.update(connected=False, proxy_ready=False, data_plane_ready=False, connected_since=None)
             if self.stopping.is_set():
                 break
             if self.state.status in ("connected", "ready"):

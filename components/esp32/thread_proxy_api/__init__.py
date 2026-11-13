@@ -1,5 +1,6 @@
 """Independent Thread Proxy management server for ESP32 Thread BRs."""
 import base64
+import ipaddress
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
@@ -26,10 +27,25 @@ def key(value):
 def validate(config):
     return socket.consume_sockets(config["max_connections"] + 1, "thread_proxy_api")(config)
 
+def node_address(value):
+    try:
+        address=ipaddress.IPv6Address(cv.string_strict(value))
+        if address.is_multicast or address.is_link_local or address.is_unspecified or address.is_loopback or address.scope_id:
+            raise ValueError
+        return str(address)
+    except ValueError as err:
+        raise cv.Invalid("Expected a unicast Thread IPv6 address without a scope") from err
+
 CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.GenerateID(): cv.declare_id(ThreadProxyAPI),
     cv.GenerateID("thread_br_id"): cv.use_id(ThreadBorderRouter),
     cv.Optional("port", default=6065): cv.port,
+    cv.Optional("udp", default={}): cv.Schema({
+        cv.Optional("queue_groups", default=16): cv.int_range(min=1,max=128),
+        cv.Optional("queue_bytes", default=131072): cv.int_range(min=32768,max=1048576),
+        cv.Optional("nodes", default=[]): cv.All(cv.ensure_list(node_address),cv.Length(max=64)),
+        cv.Optional(CONF_ENCRYPTION): cv.Schema({cv.Required(CONF_KEY): cv.sensitive(key)}),
+    }),
     cv.Optional("max_connections", default=2): cv.int_range(min=1, max=4),
     cv.Optional("status_interval", default="30s"): cv.All(cv.positive_time_period_milliseconds, cv.Range(min=cv.TimePeriod(milliseconds=1000), max=cv.TimePeriod(milliseconds=300000))),
     cv.Optional(CONF_ENCRYPTION): cv.Schema({cv.Required(CONF_KEY): cv.sensitive(key)}),
@@ -70,6 +86,15 @@ async def to_code(config):
     cg.add(var.set_port(config["port"]))
     cg.add(var.set_max_connections(config["max_connections"]))
     cg.add(var.set_status_interval(config["status_interval"].total_milliseconds))
+    udp=config["udp"]
+    cg.add(var.relay().set_limits(udp["queue_groups"],udp["queue_bytes"]))
+    for address in udp["nodes"]:
+        cg.add(var.relay().add_seed(address))
+    if CONF_ENCRYPTION in udp:
+        from esphome.components.esp32 import add_idf_sdkconfig_option
+        add_idf_sdkconfig_option("CONFIG_MBEDTLS_GCM_C", True)
+        cg.add_define("USE_THREAD_PROXY_UDP_ENCRYPTION")
+        cg.add(var.relay().set_key(cg.RawExpression("std::array<uint8_t,32>{" + ",".join(str(b) for b in base64.b64decode(udp[CONF_ENCRYPTION][CONF_KEY])) + "}")))
     cg.add_define("USE_THREAD_PROXY_API")
     cg.add_define("THREAD_PROXY_API_MAX_SEND_QUEUE", 4)
     if CONF_ENCRYPTION in config:
