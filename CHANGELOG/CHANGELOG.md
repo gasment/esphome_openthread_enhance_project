@@ -1,5 +1,22 @@
 # 更新日志
 
+## 2026-11-13 · BR 切换补发与节点来源显示（HA 0.9.0）
+
+### 功能变更
+
+- 客户端允许尚未发现 BR 时提交 manual send；发现或重新选择可用 BR 后，在本次发送时限和重试额度内继续补发。已生成的报文和事件标识保持不变，切换 BR 不重新获得重试次数；动作仍仅完成一次。
+- HA 的“BR 接入管理”新增节点最近上报来源，显示 BR 名称、地址、最近接收时间及 HA 与该 BR 的连接状态。节点实体同时提供 `last_br_id`、`last_br_name`、`last_br_host`、`last_report_at`、`last_br_api_connected` 属性；来源记录跨 HA 重启保留。
+- 来源表示最后将该节点报文转交 HA 的 BR，不代表 Thread 父节点或完整路由；BR 缓存后延迟转交时，以 HA 收到的来源为准。重复报文可更新来源，不重复发布事件。
+
+### 配置变更
+
+```yaml
+thread_proxy_client_nrf52:  # ESP32 使用 thread_proxy_client
+  discovery_timeout: 3s    # 可省略；每次等待 BR 发现/重新发现的上限
+```
+
+原 ACK 策略层级保持不变：auto 在组件级配置，manual 在 send 动作级配置。最终失败后不会无限后台补发；未确认事件供下次 send 重试。补发需更新节点固件；来源显示只需更新 HA 集成并重启 HA，BR 固件无需更改。
+
 ## 2026-11-13 · Thread Proxy
 
 本次为破坏性更新：节点接入由旧 Thread SED / `thread_sed_api` 改为 **Thread Proxy + `thread_proxy_api` + 平台客户端（ESP32：`thread_proxy_client`；nRF52：`thread_proxy_client_nrf52`）**。HA 集成版本为 **0.8.1**，要求 Home Assistant **2026.11.0 或更新版本**。

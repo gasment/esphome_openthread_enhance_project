@@ -36,6 +36,7 @@ class ProxyManager:
         self.hass = hass
         self.root_entry = None
         self.nodes = NodeRegistry(hass)
+        self.nodes.source_resolver = self.proxy_details
         self.uplink = PacketHub(lambda event, data: self.hass.bus.async_fire(event, data))
         self.bindings = {}
         self.runtimes = {}
@@ -136,6 +137,7 @@ class ProxyManager:
                 if (DOMAIN, binding.entry_id) in device.identifiers:
                     registry.async_update_device(device.id, name=binding.title)
         runtime.changed()
+        self.nodes.proxy_changed(runtime.state.proxy_id)
 
     async def sync_root(self, entry):
         # Internal writes already updated live objects before persisting. This
@@ -228,12 +230,24 @@ class ProxyManager:
                     binding.unique_id = identity; self.persist()
                 else: self.hass.config_entries.async_update_entry(binding, unique_id=identity)
             return True
-        runtime.connection = ProxyConnection(state, binding.data.get("noise_psk", ""), runtime.changed, identify)
+        def changed():
+            runtime.changed()
+            self.nodes.proxy_changed(state.proxy_id)
+        runtime.connection = ProxyConnection(state, binding.data.get("noise_psk", ""), changed, identify)
         runtime.connection.packet_handler = self.receive_node
         runtime.task = self.hass.async_create_background_task(runtime.connection.run(), f"Thread Proxy BR {binding.entry_id}")
 
+    def proxy_details(self,identity):
+        for binding in self.bindings.values():
+            if binding.unique_id==identity:
+                runtime=self.runtimes.get(binding.entry_id)
+                return {'name':binding.title,'host':binding.data['host'],
+                        'connected':runtime.state.connected if runtime else False}
+        return {}
+
     def receive_node(self,packet,br_id):
         if self.uplink.accept(packet,br_id): self.nodes.accept(packet,br_id)
+        else:self.nodes.note_source(packet,br_id)
         return self.nodes.need_schema(packet)
 
     async def stop_connection(self, runtime):
@@ -257,7 +271,7 @@ class ProxyManager:
         endpoints = {(entry.data.get("host"), entry.data.get("port", DEFAULT_PORT)) for entry in self.entries()}
         found = [item.public() for item in self.discovered.values() if item.id not in identities and (item.host, item.port) not in endpoints and item.present]
         return {"bound": sorted(bound, key=lambda item: item["name"].casefold()),
-                "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": {**self.uplink.snapshot(),"node_devices":sum(node.info is not None and not node.suspended for node in self.nodes.nodes.values()),"node_entities":len(self.nodes.entities)}}
+                "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": {**self.uplink.snapshot(),"node_devices":sum(node.info is not None and not node.suspended for node in self.nodes.nodes.values()),"node_entities":len(self.nodes.entities),"node_sources":self.nodes.public_nodes()}}
 
     async def unload_root(self):
         async with self.lock:

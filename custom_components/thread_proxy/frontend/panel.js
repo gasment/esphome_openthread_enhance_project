@@ -46,6 +46,7 @@ class ThreadProxyPanel extends HTMLElement {
         </form>
         <div id="error" class="error" role="alert"></div>
         <section><h2>已绑定 BR</h2><div id="bound" class="list"></div></section>
+        <section><h2>代理节点 · 最近上报来源</h2><div id="node-sources" class="list"></div></section>
         <section><h2>发现的 BR</h2><div class="muted hint">点击接入后建立绑定；已绑定的 BR 不会在此重复显示。</div><div id="discovered" class="list"></div></section>
       </main>`;
     this.shadowRoot.getElementById("add").onclick = () => {this.clearCandidate();this.form.reset();this.form.hidden=false;};
@@ -85,6 +86,7 @@ class ThreadProxyPanel extends HTMLElement {
   button(label,fn,danger=false){const b=this.text("button",label,danger?"danger":"");b.onclick=fn;return b;}
   endpoint(item){return `${item.host.includes(":")?`[${item.host}]`:item.host}:${item.port}`;}
   render(data){
+    this.renderNodeSources(data.uplink?.node_sources||[]);
     const online=data.bound.filter(x=>x.connected).length;
     this.shadowRoot.getElementById("counts").textContent=`${data.bound.length} 台已绑定 · ${online} 台 API 在线 · ${data.discovered.length} 台待接入 · ${data.uplink?.node_devices??0} 个节点`;
     for(const category of ["bound","discovered"]){
@@ -119,6 +121,22 @@ class ThreadProxyPanel extends HTMLElement {
         }
         row.append(identity,address,state,actions);container.append(row);
       }
+    }
+  }
+  renderNodeSources(items){
+    const container=this.shadowRoot.getElementById("node-sources");container.replaceChildren();
+    if(!items.length){container.append(this.text("div","暂无已上报的代理节点。","empty"));return;}
+    for(const item of items){
+      const row=this.text("div","","row"),identity=this.text("div","");
+      identity.append(this.text("div",item.name,"title"),this.text("div",item.mac,"muted details"));
+      const source=this.text("div","");
+      source.append(this.text("div",item.last_br_name||item.last_br_id||"等待新上报","title"));
+      if(item.last_br_host)source.append(this.text("div",item.last_br_host,"address details"));
+      const status=this.text("div","");
+      status.append(this.text("div",item.last_report_at?new Date(item.last_report_at).toLocaleString():"尚无接收时间","muted"));
+      if(item.last_br_api_connected!==null&&item.last_br_api_connected!==undefined)
+        status.append(this.text("div",item.last_br_api_connected?"来源 BR 的 HA 连接在线":"来源 BR 的 HA 连接离线","muted details"));
+      row.append(identity,source,status);container.append(row);
     }
   }
   discoveredBind(item){

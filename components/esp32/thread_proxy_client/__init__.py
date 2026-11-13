@@ -118,6 +118,7 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.GenerateID(): cv.declare_id(ThreadProxyClient),
     cv.Optional(CONF_ENCRYPTION): cv.Schema({cv.Required(CONF_KEY): cv.sensitive(noise_key)}),
     cv.Optional('port', default=6064): cv.port,
+    cv.Optional('discovery_timeout', default='3s'): cv.All(cv.positive_time_period_milliseconds, cv.Range(min=cv.TimePeriod(milliseconds=1),max=cv.TimePeriod(milliseconds=60000))),
     cv.Optional('send_mode', default='auto'): cv.one_of('auto','manual',lower=True),
     cv.Optional('on_ready'):automation.validate_automation(single=True),
     cv.Optional('on_disconnect'):automation.validate_automation(single=True),
@@ -171,6 +172,7 @@ async def to_code(config):
     CORE.register_controller(var)
     request_log_listener()
     cg.add(var.set_port(config['port']))
+    cg.add(var.set_discovery_timeout(config['discovery_timeout'].total_milliseconds))
     cg.add(var.set_reboot_timeout(0))
     cg.add(var.set_manual_send(config['send_mode']=='manual'))
     if config['send_mode']=='auto':

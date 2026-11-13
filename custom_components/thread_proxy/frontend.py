@@ -68,7 +68,7 @@ async def async_setup_frontend(hass, manager):
     await hass.http.async_register_static_paths([StaticPathConfig("/thread_proxy_static", str(Path(__file__).parent / "frontend"), cache_headers=False)])
     hass.http.register_view(ProxyView(hass, manager))
     from homeassistant.components.frontend import add_extra_js_url
-    add_extra_js_url(hass, "/thread_proxy_static/integration-entry.js?v=0.8.1")
+    add_extra_js_url(hass, "/thread_proxy_static/integration-entry.js?v=0.9.0")
     await panel_custom.async_register_panel(hass, frontend_url_path=PANEL_PATH, webcomponent_name="thread-proxy-panel",
-        sidebar_title=None, sidebar_icon="mdi:router-network", module_url="/thread_proxy_static/panel.js?v=0.8.1", require_admin=True)
+        sidebar_title=None, sidebar_icon="mdi:router-network", module_url="/thread_proxy_static/panel.js?v=0.9.0", require_admin=True)
     manager.panel_registered = True

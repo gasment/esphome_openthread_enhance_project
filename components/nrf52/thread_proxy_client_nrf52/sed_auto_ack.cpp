@@ -11,7 +11,7 @@ void ThreadProxyClient::sed_auto_published(APIConnection *client, bool queued) {
   if (!this->sed_auto_pending()) {
     this->sed_auto_event_cursor_=0;
     this->sed_auto_retries_left_=this->sed_auto_resend_;
-    this->sed_auto_started_ = millis();
+    this->sed_auto_started_ = millis();this->sed_auto_phase_started_=millis();
     this->sed_auto_token_ = "auto:" + std::to_string(random_uint32()) + ":" + std::to_string(++this->sed_auto_sequence_);
   }
   ++this->sed_auto_generation_;
@@ -45,7 +45,7 @@ void ThreadProxyClient::sed_auto_finish(bool success, const char *reason) {
     this->sed_auto_error_ = nullptr;
   const bool pending = this->sed_auto_pending();
   if (pending) {
-    this->sed_auto_started_ = millis();
+    this->sed_auto_started_ = millis();this->sed_auto_phase_started_=millis();
     this->sed_auto_token_ = "auto:" + std::to_string(random_uint32()) + ":" + std::to_string(++this->sed_auto_sequence_);
   }
   // Reset all transaction state before executing user automation. A callback
@@ -78,12 +78,17 @@ void ThreadProxyClient::sed_auto_tick() {
   }
   if (!this->sed_auto_pending()) return;
   if (this->sed_auto_error_ != nullptr) { this->sed_auto_finish(false, this->sed_auto_error_); return; }
+  if(!this->udp_.ready()) {
+    if(!this->udp_.recovering() && millis()-this->sed_auto_started_>=this->discovery_timeout_)
+      this->sed_auto_finish(false,"proxy_discovery_timeout");
+    return;
+  }
   if (this->sed_auto_waiting_) {
-    if (millis()-this->sed_auto_started_ >= (this->sed_auto_timeout_+5000U)*(this->sed_auto_resend_+1U)+10000U)
+    if (millis()-this->sed_auto_started_ >= (this->sed_auto_timeout_+this->discovery_timeout_+5000U)*(this->sed_auto_resend_+1U)+10000U)
       this->sed_auto_finish(false,"delivery_stalled");
     return;
   }
-  if (millis()-this->sed_auto_started_ >= 5000U) { this->sed_auto_finish(false,"snapshot_stalled"); return; }
+  if (millis()-this->sed_auto_phase_started_ >= 5000U) { this->sed_auto_finish(false,"snapshot_stalled"); return; }
   if (this->sed_batch_done_ || this->sed_sleep_finishing_) return;
   if (this->sed_auto_client_ == nullptr || !this->sed_auto_client_->sed_flush_ready()) return;
   if (!this->udp_.can_flush()) return;

@@ -140,3 +140,11 @@ auto 模式使用 `auto ACK`。耗时从该批次开始计算，含快照序列�
 
 
 ESP32 平台继续使用 [thread_proxy_client](../../esp32/thread_proxy_client/README.md)。
+
+### BR 不可达与补发
+
+`send` 可在尚未发现 BR 时调用，等待发现后继续发送。可选组件配置 `discovery_timeout: 3s`（默认 3 秒，范围 1ms～60s）限制每次发现/重新发现的等待时间；描述同步和 ACK 另有时限。
+
+在 ACK 重试额度内，BR 不可达会触发重新发现；选中可用 BR 后，继续补发尚未确认的批次。已经生成的批次保留内容、group 和事件 token，切换 BR 不重置已消耗的发送轮次。`ack_resend` 仍表示额外发送次数，0 不重发；auto 使用组件策略，manual 使用本次 send 的策略。
+
+同一次 send 仅触发一次成功或失败回调。发现超时或重试额度耗尽后，该动作结束，不在失败回调后继续偷偷发送；未确认事件保留供后续 send，普通状态由后续快照同步。缓存仅在 RAM 中，重启会丢失。若使用休眠 guard，`prepare_timeout` 需覆盖配置的发现、描述同步和 ACK 等待时间。

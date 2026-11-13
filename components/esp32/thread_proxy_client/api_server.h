@@ -48,6 +48,9 @@ class ThreadProxyClient final : public Component
   Trigger<> *get_disconnect_trigger() { return &proxy_disconnect_trigger_; }
   Trigger<> proxy_ready_trigger_, proxy_disconnect_trigger_;
   bool proxy_was_ready_{false};
+  void set_discovery_timeout(uint32_t ms) { discovery_timeout_=ms; }
+  uint32_t discovery_timeout() const { return discovery_timeout_; }
+  uint32_t discovery_timeout_{3000};
   void set_sleep_budget(uint32_t ms) { sed_sleep_budget_ = ms; }
   bool sed_transport_ready() const {
     return true;
@@ -329,6 +332,7 @@ class ThreadProxyClient final : public Component
   uint16_t sed_auto_resend_{2}, sed_auto_retries_left_{0};
   std::string sed_auto_token_;
   const char *sed_auto_error_{nullptr};
+  uint32_t sed_auto_phase_started_{0};
   Trigger<std::string, uint32_t, bool> sed_auto_ack_trigger_;
   Trigger<std::string, std::string> sed_auto_error_trigger_;
   bool sed_manual_send_{false};
@@ -342,7 +346,8 @@ class ThreadProxyClient final : public Component
   uint16_t sed_batch_resend_{0}, sed_batch_retries_left_{0};
   const char *sed_batch_delivery_error_{nullptr};
   uint32_t sed_batch_cutoff_{0}, sed_batch_event_cursor_{0};
-  bool sed_batch_snapshot_started_{false};
+  bool sed_batch_snapshot_started_{false}, sed_batch_cutoff_fixed_{false};
+  uint32_t sed_batch_snapshot_at_{0};
   bool sed_batch_marker_sent_{false}, sed_batch_acked_{false}, sed_batch_disconnected_{false};
   struct SedEvent { uint32_t sequence; uint32_t key; std::string type; EntityBase *entity; };
   std::vector<SedEvent> sed_events_;
