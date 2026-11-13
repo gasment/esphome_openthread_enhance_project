@@ -1,6 +1,6 @@
 # thread_proxy_client
 
-ESP32 / nRF52 Thread 节点的只读上行组件，取代 `thread_sed_api` 的节点通信入口。适用于 SED、MED 和 REED；不建立 HA TCP 连接，不使用 Noise，不注册或查找节点 SRP 服务。
+ESP32 Thread 节点的只读上行组件，取代 `thread_sed_api` 的节点通信入口。适用于 SED、MED 和 REED；不建立 HA TCP 连接，不使用 Noise，不注册或查找节点 SRP 服务。
 
 节点在 Thread 内主动探测 BR，确认后把实体描述、状态及事件通过 TSD2 UDP 上报；BR 入队即回复 ACK，再经独立 TCP 转交 HA。HA 从**已绑定 BR**收到节点描述后直接创建设备和只读实体，无逐节点发现、IP 填写或接入确认。
 
@@ -135,3 +135,6 @@ DEBUG 下每次正常发送只保留一条完成摘要：
 auto 模式使用 `auto ACK`。耗时从该批次开始计算，含快照序列化及等待 ACK；B 为此次 UDP 组的原始载荷字节，rounds 为实际发送轮数（含首轮），group 可与 BR 日志对应。
 
 发送开始、事件快照截止序号、目标/wake、逐包 ACK、每轮发送及 fast-poll 切换细节改为 VERBOSE；需要逐包排查时将编译日志级别设为 VERBOSE。首次 BR 连接保留 INFO，描述同步完成保留一条 DEBUG 摘要，最终失败保留 WARNING。deep_sleep 的唤醒/休眠和 YAML 自定义 logger.log 来自各自组件/自动化，可按需单独设置级别。
+
+
+nRF52 平台使用 [thread_proxy_client_nrf52](../../nrf52/thread_proxy_client_nrf52/README.md)，配置及 action/condition 前缀相应使用 `thread_proxy_client_nrf52`。

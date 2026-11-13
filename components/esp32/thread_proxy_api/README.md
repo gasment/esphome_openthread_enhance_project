@@ -56,7 +56,7 @@ api:
 
 已增加 Thread 内部 UDP 6064 接收、TSD2 分片重组、可选 AES-GCM、本地队列 ACK，以及通过独立 TCP API 向 HA 转发并等待 HA 确认。`data_plane_ready` 表示 Thread UDP 端点已附着可用。无业务下行控制。
 
-默认无需增加 YAML。`thread_proxy_client` 在 Thread 内主动探测本 BR；不依赖节点 SRP 业务记录，不需要手填节点地址。探测与 ACK 使用 BR 的 Thread 地址，不经 HA 主机的 IPv6 下一跳路由。请先在 HA 中绑定参与代理的 BR，再更新节点。
+默认无需增加 YAML。`thread_proxy_client`（ESP32）或 `thread_proxy_client_nrf52`（nRF52）在 Thread 内主动探测本 BR；不依赖节点 SRP 业务记录，不需要手填节点地址。探测与 ACK 使用 BR 的 Thread 地址，不经 HA 主机的 IPv6 下一跳路由。请先在 HA 中绑定参与代理的 BR，再更新节点。
 ```yaml
 thread_proxy_api:
   thread_br_id: thread_br_main
@@ -72,7 +72,7 @@ UDP 密钥与代理 TCP Noise 密钥相互独立；UDP 首版使用一把共享�
 
 **节点收到 ACK 表示报文已进入 BR 的有界 RAM 队列，不表示 HA 已更新实体。** HA 断线时继续缓存，队列满则不发成功 ACK；BR 断电/重启会丢失待转交报文。载荷缓冲优先使用 PSRAM，另有分片重组、接收队列、工作任务和去重表的内存开销。TCP 重连后使用同一投递标识重传，HA 跨 BR 去重。
 
-HA 接收原始实体描述、状态及事件记录，按稳定节点 MAC 直接创建设备和只读实体，不走逐节点接入流程；同时保留接收缓存和 HA 事件。见 [功能变更与配置迁移](../../../CHANGELOG.md)。
+HA 接收原始实体描述、状态及事件记录，按稳定节点 MAC 直接创建设备和只读实体，不走逐节点接入流程；同时保留接收缓存和 HA 事件。见 [功能变更与配置迁移](../../../CHANGELOG/CHANGELOG.md)。
 
 ## 验证
 

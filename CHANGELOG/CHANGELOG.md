@@ -2,7 +2,7 @@
 
 ## 2026-11-13 · Thread Proxy
 
-本次为破坏性更新：节点接入由旧 Thread SED / `thread_sed_api` 改为 **Thread Proxy + `thread_proxy_api` + `thread_proxy_client`**。HA 集成版本为 **0.8.1**，要求 Home Assistant **2026.11.0 或更新版本**。
+本次为破坏性更新：节点接入由旧 Thread SED / `thread_sed_api` 改为 **Thread Proxy + `thread_proxy_api` + 平台客户端（ESP32：`thread_proxy_client`；nRF52：`thread_proxy_client_nrf52`）**。HA 集成版本为 **0.8.1**，要求 Home Assistant **2026.11.0 或更新版本**。
 
 ### 功能变更
 
@@ -61,13 +61,13 @@ thread_proxy_api:
     #   key: !secret node_udp_key # 节点↔BR AES-GCM，与节点 encryption.key 一致。
 ```
 
-#### 3. 节点迁移为 thread_proxy_client
+#### 3. 节点迁移为对应平台客户端
 
-ESP32、nRF52 均提供客户端。沿用原来的 Thread 配网设置；把 external_components 列表中的 `thread_sed_api` 替换为 `thread_proxy_client`。
+ESP32 使用 `thread_proxy_client`，nRF52 使用 `thread_proxy_client_nrf52`。沿用原来的 Thread 配网设置；external_components 列表、顶层配置及 action/condition 前缀均替换为对应名称。下面以 nRF52 为例：
 
 ```diff
 -thread_sed_api:
-+thread_proxy_client:
++thread_proxy_client_nrf52:
    id: sed_api                  # 原 id 可以保留。
 -  transport: udp               # 若有此项，删除；新客户端仅支持 UDP。
    send_mode: manual
@@ -75,7 +75,7 @@ ESP32、nRF52 均提供客户端。沿用原来的 Thread 配网设置；把 ext
 
  # 自动化中的组件前缀也要替换：
 -  - thread_sed_api.send:
-+  - thread_proxy_client.send:
++  - thread_proxy_client_nrf52.send:
        id: sed_api
        entity_id: [sys_vdd, battery_level, key_event]
        ack_timeout: 500ms
@@ -83,9 +83,9 @@ ESP32、nRF52 均提供客户端。沿用原来的 Thread 配网设置；把 ext
        # 原有 on_success / on_error 可以保留。
 
 -  # thread_sed_api.is_ready: sed_api
-+  # thread_proxy_client.is_ready: sed_api
++  # thread_proxy_client_nrf52.is_ready: sed_api
 -  # thread_sed_api.can_sleep:
-+  # thread_proxy_client.can_sleep:
++  # thread_proxy_client_nrf52.can_sleep:
 ```
 
 旧 `thread_sed_api` 已移除。新客户端不能与官方 `api` 同时配置，也不再使用 TCP/Noise。可选的节点 `encryption.key` 用于 UDP AES-GCM，需与 BR 的 `udp.encryption.key` 相同；默认不强制加密。
@@ -95,11 +95,13 @@ ESP32、nRF52 均提供客户端。沿用原来的 Thread 配网设置；把 ext
 | 模式 | ACK 配置位置 | 回调 |
 |---|---|---|
 | `auto` | 组件级 `ack_timeout`、`ack_resend` | 组件级 `on_ack`、`on_ack_error` |
-| `manual` | 每个 `thread_proxy_client.send` 下 | action 级 `on_success`、`on_error` |
+| `manual` | 每个平台客户端的 `.send` action 下 | action 级 `on_success`、`on_error` |
 
 manual 不允许配置组件级 ACK 策略或 ACK 回调；auto 不允许调用手动 send。
 
 `ack_timeout` 为每轮等待 ACK 的时限，`ack_resend` 为额外重发次数。例如 `500ms`、`2` 最多发送三轮，等待 ACK 的预算约 1.5 秒，另计快照与实际发送耗时。
+
+以下 auto 示例为 ESP32；nRF52 将顶层名称替换为 `thread_proxy_client_nrf52`。
 
 ```yaml
 thread_proxy_client:
@@ -123,4 +125,27 @@ thread_proxy_client:
 
 仅更新单节点删除/恢复功能时，只需更新 HA 集成并重启；仅更新客户端日志精简时，只需更新客户端固件。
 
-详细配置：[BR 代理](components/esp32/thread_proxy_api/README.md)、[nRF52 客户端](components/nrf52/thread_proxy_client/README.md)、[ESP32 客户端](components/esp32/thread_proxy_client/README.md)。
+详细配置：[BR 代理](../components/esp32/thread_proxy_api/README.md)、[nRF52 客户端](../components/nrf52/thread_proxy_client_nrf52/README.md)、[ESP32 客户端](../components/esp32/thread_proxy_client/README.md)。
+
+
+### nRF52 客户端更名
+
+ESP32 名称保持 `thread_proxy_client`；nRF52 更名为 `thread_proxy_client_nrf52`，需同步修改 external_components 列表、组件顶层及自动化前缀。组件 id 和发送、ACK、休眠配置可保留。
+
+```diff
+-thread_proxy_client:
++thread_proxy_client_nrf52:
+   id: proxy_client
+   send_mode: manual
+
+-  - thread_proxy_client.send:
++  - thread_proxy_client_nrf52.send:
+       id: proxy_client
+
+-  # thread_proxy_client.is_ready: proxy_client
++  # thread_proxy_client_nrf52.is_ready: proxy_client
+-  # thread_proxy_client.can_sleep:
++  # thread_proxy_client_nrf52.can_sleep:
+```
+
+仅更新 nRF52 节点配置和固件；BR 与 HA 无需变更，已有节点设备及实体身份保留。
