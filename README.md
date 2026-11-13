@@ -69,16 +69,4 @@ features:
 ## 使用指导
 参阅文档：https://esphome-openthread-enhance-pj.netlify.app/
 
-## Thread Proxy
 
-HA 集成位于 `custom_components/thread_proxy`，要求 Home Assistant 2026.11.0 或更新版本。可将本仓库作为 Integration 类型添加到 HACS，或手动复制该目录；安装后重启 HA。
-
-BR 使用 [thread_proxy_api](components/esp32/thread_proxy_api/README.md)，节点按平台使用 [thread_proxy_client](components/esp32/thread_proxy_client/README.md)（ESP32）或 [thread_proxy_client_nrf52](components/nrf52/thread_proxy_client_nrf52/README.md)（nRF52）。在 HA 的“BR 接入管理”中确认发现的 BR，或手工填写 BR 的 LAN 地址与代理 TCP 端口，默认6065。
-
-节点在 Thread 内主动探测 BR，不需要节点 SRP 服务记录或逐个接入确认。HA 收到描述后直接创建只读设备和实体；节点可独立删除，后续上报时按原标识恢复。
-
-旧 Thread SED / `thread_sed_api` 及 transporter、实体桥接入方式需要迁移，详见 [功能与配置更新日志](CHANGELOG/CHANGELOG.md)。
-
-✅
-
-2
