@@ -31,6 +31,9 @@ class ThreadProxyPanel extends HTMLElement {
         section{margin-top:26px}.list{display:flex;flex-direction:column;gap:9px;margin-top:12px}.row{padding:15px 17px;border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color);display:grid;grid-template-columns:minmax(160px,1.2fr) minmax(190px,1.4fr) minmax(150px,1fr) auto;gap:12px;align-items:center}.title{font-weight:600;overflow-wrap:anywhere}.address{font-family:monospace;font-size:13px;overflow-wrap:anywhere}.badge{display:inline-block;font-size:12px;border-radius:20px;padding:5px 9px;background:var(--secondary-background-color)}.good{color:var(--success-color,#22834b)}.bad{color:var(--error-color,#c33)}.actions{display:flex;gap:7px;justify-content:flex-end}.details{margin-top:5px;overflow-wrap:anywhere}.empty{padding:25px;text-align:center;border:1px dashed var(--divider-color);border-radius:12px;color:var(--secondary-text-color)}
         .note{margin-top:14px;padding:11px 14px;border-left:3px solid var(--primary-color);background:var(--card-background-color);font-size:13px;line-height:1.6}.error{color:var(--error-color,#c33);min-height:20px;margin-top:12px;white-space:pre-wrap}form{margin-top:15px;border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color);padding:18px;display:grid;grid-template-columns:2fr 1fr 2fr;gap:12px}form[hidden],#clear-key-label[hidden]{display:none}label{font-size:13px;display:flex;flex-direction:column;gap:6px}input{min-width:0;width:100%;border:1px solid var(--divider-color);border-radius:7px;padding:10px;background:var(--primary-background-color);color:var(--primary-text-color)}.wide{grid-column:span 2}.form-actions{align-self:end;display:flex;gap:8px;justify-content:flex-end}.counts{margin:6px 0 0}.hint{margin-top:6px}
         @media(max-width:1150px){main{padding:16px}.row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.actions{grid-column:1 / -1;grid-row:3;flex-wrap:wrap}.row>.state{grid-column:1;grid-row:2}form{grid-template-columns:1fr 90px}.wide{grid-column:span 2}.form-actions{grid-column:span 2}header{padding:0 12px}}
+        .row.node-source-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) max-content;padding:10px 14px;gap:16px;min-height:42px}
+        .node-source-row>.title,.node-source-br{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}.node-source-time{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+        @media(max-width:540px){.row.node-source-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px}.node-source-time{grid-column:1 / -1;text-align:left}}
       </style>
       <header><ha-menu-button></ha-menu-button><h1>BR 接入管理</h1><a class="back-link" href="/config/integrations/integration/thread_proxy">返回集成</a></header>
       <main>
@@ -127,16 +130,13 @@ class ThreadProxyPanel extends HTMLElement {
     const container=this.shadowRoot.getElementById("node-sources");container.replaceChildren();
     if(!items.length){container.append(this.text("div","暂无已上报的代理节点。","empty"));return;}
     for(const item of items){
-      const row=this.text("div","","row"),identity=this.text("div","");
-      identity.append(this.text("div",item.name,"title"),this.text("div",item.mac,"muted details"));
-      const source=this.text("div","");
-      source.append(this.text("div",item.last_br_name||item.last_br_id||"等待新上报","title"));
-      if(item.last_br_host)source.append(this.text("div",item.last_br_host,"address details"));
-      const status=this.text("div","");
-      status.append(this.text("div",item.last_report_at?new Date(item.last_report_at).toLocaleString():"尚无接收时间","muted"));
-      if(item.last_br_api_connected!==null&&item.last_br_api_connected!==undefined)
-        status.append(this.text("div",item.last_br_api_connected?"来源 BR 的 HA 连接在线":"来源 BR 的 HA 连接离线","muted details"));
-      row.append(identity,source,status);container.append(row);
+      const row=this.text("div","","row node-source-row");
+      const name=this.text("div",item.name,"title");name.title=item.name;
+      const brName=item.last_br_name||"等待新上报";
+      const source=this.text("div",brName,"node-source-br");source.title=brName;
+      const time=this.text("time",item.last_report_at?new Date(item.last_report_at).toLocaleString():"尚无接收时间","muted node-source-time");
+      if(item.last_report_at)time.dateTime=item.last_report_at;
+      row.append(name,source,time);container.append(row);
     }
   }
   discoveredBind(item){
