@@ -16,6 +16,9 @@
 
 #ifdef USE_LIGHT
 #include "esphome/components/light/light_traits.h"
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+#include "esphome/components/light/light_effect_names.h"
+#endif
 #endif
 
 #ifdef USE_FAN
