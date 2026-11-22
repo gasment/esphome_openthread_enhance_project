@@ -112,19 +112,21 @@ FINAL_VALIDATE_SCHEMA = _final_validate
 
 @coroutine_with_priority(CoroPriority.BUS)
 async def to_code(config: ConfigType) -> None:
-    # Reuse ESPHome's generic I2C base and Zephyr bus implementation without
-    # loading the official top-level `i2c:` integration.
+    # Reuse ESPHome's generic I2C base while supplying the nRF52-specific
+    # backend locally, without loading the official top-level `i2c:` integration.
     i2c_source = Path(esphome.__file__).parent / "components" / "i2c"
-    for filename in (
-        "i2c.h",
-        "i2c.cpp",
-        "i2c_bus.h",
-        "i2c_bus_zephyr.h",
-        "i2c_bus_zephyr.cpp",
-    ):
+    component_source = Path(__file__).parent
+    source_files = {
+        "i2c.h": i2c_source / "i2c.h",
+        "i2c.cpp": i2c_source / "i2c.cpp",
+        "i2c_bus.h": i2c_source / "i2c_bus.h",
+        "i2c_bus_zephyr.h": component_source / "i2c_bus_zephyr.h",
+        "i2c_bus_zephyr.cpp": component_source / "i2c_bus_zephyr.cpp",
+    }
+    for filename, source in source_files.items():
         add_extra_build_file(
             f"src/esphome/components/i2c/{filename}",
-            i2c_source / filename,
+            source,
         )
 
     # The external component supplies these files at build time, so the generated
