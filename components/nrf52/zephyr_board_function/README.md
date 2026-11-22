@@ -4,6 +4,33 @@
 烧写和日志读取，无需 UART TX/RX 或目标 USB CDC。
 适配当前 ESPHome 2026.9.1 / NCS 2.9.2，不修改安装的 ESPHome 源码。
 
+## Zephyr 系统依赖
+
+WSL / Ubuntu 构建 nRF52 Zephyr 固件前必须安装 Devicetree Compiler。缺失时
+App 或 MCUboot 的 CMake 配置可能在 `sysbuild` 阶段失败，典型错误为：
+
+```text
+CMake configure failed for Zephyr project: mcuboot
+```
+
+安装并验证：
+
+```bash
+sudo apt update
+sudo apt install -y device-tree-compiler
+dtc --version
+```
+
+`dtc` 是主机系统工具，不是 Python 包，也不包含在 NCS Python 虚拟环境中。
+如果此前已经在缺少 `dtc` 的环境中配置失败，安装后应清理 ESPHome 构建目录再
+重新生成，避免复用失败的 CMake 缓存：
+
+```bash
+rm -rf /home/gasment/esphome/build/wireless-bt-1fstair/.pioenvs
+```
+
+将实际项目名替换为对应 ESPHome `build_path`。
+
 ## 配置
 
 ```yaml
@@ -27,9 +54,11 @@ YAML 的 `nrf52.board` 直接使用 `e73_or_nd05/nrf52840`，不需要其他板�
 LDO，不分配任何预设 pin、pinctrl 或 ADC channel，也不预设 UART、SPI、QSPI、
 USB、LED、按键或 Feather connector。
 
-I2C0 和 ADC 控制器节点保持 `okay`，但没有任何引脚和通道。这样后续显式添加
-ESPHome `i2c` 或 `battery_level_nrf52` 时可以直接使用；没有对应组件时不会
-编译驱动，也不会产生 IO 行为。`uart_nrf52` 和 SPI 组件会自行启用所需节点。
+ADC 控制器节点保持 `okay`，但没有分配任何通道。I2C0 保持 Zephyr 默认的
+`disabled`，因为 TWIM binding 要求启用时必须提供 `pinctrl-0`。后续配置
+`i2c_nrf52` 时，组件会生成 SDA/SCL pinctrl 并启用对应 I2C 节点；没有对应
+组件时不会编译驱动，也不会产生 IO 行为。`uart_nrf52` 和 SPI 组件会自行启用
+所需节点。
 
 板级 DTS 同时被应用和 MCUboot 镜像继承，因此 REG1 LDO 对两个镜像都生效，
 `thread_ota_nrf52.mcuboot_dcdc` 在 `e73_or_nd05/nrf52840` 上无需配置。
