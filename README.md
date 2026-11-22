@@ -36,3 +36,6 @@
 * 本项目未经大规模部署验证，仅用于学习研究与个人使用
 * 本项目内各组件高度耦合，必须同一套使用，不能混用其他类似组件
 * 本项目不考虑适配Thread市场商品，只针对运行esphome的ESP32 / nRF52840 设备
+
+## 使用指导
+参阅文档：https://esphome-openthread-enhance-pj.netlify.app/
