@@ -9,6 +9,7 @@ void ThreadProxyClient::sed_auto_published(APIConnection *client, bool queued) {
   if (this->sed_auto_client_ != nullptr && this->sed_auto_client_ != client) return;
   if (this->sed_auto_client_ == nullptr) this->sed_auto_client_ = client;
   if (!this->sed_auto_pending()) {
+    this->sed_activity_started();
     this->sed_auto_event_cursor_=0;
     this->sed_auto_retries_left_=this->sed_auto_resend_;
     this->sed_auto_started_ = millis();this->sed_auto_phase_started_=millis();
@@ -44,6 +45,8 @@ void ThreadProxyClient::sed_auto_finish(bool success, const char *reason) {
   if (!success || this->sed_auto_generation_ == this->sed_auto_marker_generation_)
     this->sed_auto_error_ = nullptr;
   const bool pending = this->sed_auto_pending();
+  this->sed_activity_finished(success);
+  if (pending) this->sed_activity_started();
   if (pending) {
     this->sed_auto_started_ = millis();this->sed_auto_phase_started_=millis();
     this->sed_auto_token_ = "auto:" + std::to_string(random_uint32()) + ":" + std::to_string(++this->sed_auto_sequence_);

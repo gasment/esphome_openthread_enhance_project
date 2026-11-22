@@ -210,6 +210,7 @@ bool ThreadP2PTransporter::transmit_(const otIp6Address &target, uint16_t port, 
 
 void ThreadP2PTransporter::complete_(bool success, uint8_t flag, uint32_t id, const SendCompletion &completion) {
   if (shutdown_) return;
+  activity_callbacks_.call(false, success);
   if (success) {
     ESP_LOGD(TAG, "Message %u flag=0x%02X acknowledged", unsigned(id), flag);
     success_callbacks_.call(flag, id);
@@ -229,10 +230,12 @@ void ThreadP2PTransporter::notify_fail_(uint8_t flag, uint32_t id, SendCompletio
 
 bool ThreadP2PTransporter::send(const std::string &target, bool direct_address, std::optional<uint16_t> port_override, uint8_t flag,
                               const Payload &payload, uint32_t timeout, uint8_t resend, SendCompletion completion) {
+  activity_callbacks_.call(true, false);
   if (++sequence_ == 0) {
     sequence_ = 1;
     if (!renew_session_()) {
       if (timeout) notify_fail_(flag, sequence_, std::move(completion));
+      else activity_callbacks_.call(false, false);
       return false;
     }
   }
@@ -240,6 +243,7 @@ bool ThreadP2PTransporter::send(const std::string &target, bool direct_address, 
   auto reject = [this, flag, id, timeout, &completion](const char *reason) {
     ESP_LOGW(TAG, "Message %u rejected: %s", unsigned(id), reason);
     if (timeout) notify_fail_(flag, id, std::move(completion));
+    else activity_callbacks_.call(false, false);
     return false;
   };
   std::string body;
@@ -282,6 +286,7 @@ bool ThreadP2PTransporter::send(const std::string &target, bool direct_address, 
   if (timeout) pending_.push_back({destination, port, flag, resend, id, timeout, millis(), wire, std::move(completion)});
   bool submitted = transmit_(destination, port, wire);
   if (!submitted) ESP_LOGW(TAG, "Message %u UDP submission failed%s", unsigned(id), timeout ? "; ACK retry remains active" : "");
+  if (!timeout) activity_callbacks_.call(false, submitted);
   return submitted;
 }
 
@@ -375,6 +380,7 @@ bool ThreadP2PTransporter::renew_session_() {
 void ThreadP2PTransporter::on_shutdown() {
   shutdown_ = true;
   ready_ = false;
+  for (size_t i = 0; i < pending_.size(); i++) activity_callbacks_.call(false, false);
   pending_.clear();
   close_();
 }
@@ -382,6 +388,7 @@ void ThreadP2PTransporter::on_shutdown() {
 bool ThreadP2PTransporter::teardown() {
   shutdown_ = true;
   ready_ = false;
+  for (size_t i = 0; i < pending_.size(); i++) activity_callbacks_.call(false, false);
   pending_.clear();
   return this->close_();
 }

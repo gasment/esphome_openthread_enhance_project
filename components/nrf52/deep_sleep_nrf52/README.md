@@ -402,6 +402,8 @@ sleep->add_sleep_guard([this]() { return this->ready_for_sleep(); });
 
 `sleep->wake()` 可从 ISR/其他线程调用。owner 和 guard 捕获对象须与组件同寿命；
 获取/释放锁、注册 guard 等管理接口仅在主线程调用。
+统一管理器还可使用 `add_sleep_callback()`、`add_wake_callback()` 和
+`add_abort_callback()` 接入实际入睡、恢复及取消事件；这些回调在主线程同步执行。
 **当前 P2P/REED 尚未接入这些接口，组件不会自动识别它们的 pending ACK。**
 不要直接把独立示例的定时休眠接到现有通信配置上，下一步 SED 移植时再接入通信就绪判定。
 

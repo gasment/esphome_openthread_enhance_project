@@ -74,6 +74,7 @@ void ThreadProxyClient::sed_cancel_batch(const void *owner) {
   this->sed_batch_done_ = nullptr;
   this->sed_batch_client_ = nullptr;
   this->sed_batch_owner_ = nullptr;
+  this->sed_activity_finished(false);
   ESP_LOGV("thread_proxy_client_nrf52", "send cancelled");
 }
 
@@ -99,6 +100,7 @@ void ThreadProxyClient::sed_finish_batch(bool success, const char *reason) {
   } else {
     ESP_LOGW("thread_proxy_client_nrf52", "send %s failed: %s", this->sed_batch_token_.c_str(), reason);
   }
+  this->sed_activity_finished(success);
   done(success);
 }
 

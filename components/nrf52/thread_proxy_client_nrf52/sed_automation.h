@@ -38,6 +38,7 @@ template<typename... Ts> class SendAction : public Action<Ts...> {
   }
   void play_complex(const Ts &...x) override {
     this->num_running_++;
+    this->parent_->sed_activity_started();
     // Like ESPHome's asynchronous actions, preserve trigger arguments by value.
     auto done = [this, x...](bool success) mutable {
       if (this->num_running_ == 0) return;
@@ -45,7 +46,10 @@ template<typename... Ts> class SendAction : public Action<Ts...> {
       if (branch.empty()) this->play_next_(x...);
       else branch.play(x...);
     };
-    if (!this->parent_->sed_begin_batch(this, this->ack_timeout_.value(x...), this->ack_resend_.value(x...), this->entities_, done)) done(false);
+    if (!this->parent_->sed_begin_batch(this, this->ack_timeout_.value(x...), this->ack_resend_.value(x...), this->entities_, done)) {
+      this->parent_->sed_activity_finished(false);
+      done(false);
+    }
   }
  protected:
   void play(const Ts &...x) override {
