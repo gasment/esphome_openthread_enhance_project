@@ -127,6 +127,12 @@ async def to_code(config: ConfigType) -> None:
             i2c_source / filename,
         )
 
+    # The external component supplies these files at build time, so the generated
+    # main.cpp must include the concrete Zephyr bus type explicitly.
+    cg.add_global(
+        cg.RawStatement('#include "esphome/components/i2c/i2c_bus_zephyr.h"')
+    )
+
     port = PORT_NAMES[config[CONF_HARDWARE_I2C]]
     sda = config[CONF_SDA]
     scl = config[CONF_SCL]
