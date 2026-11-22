@@ -64,6 +64,9 @@ ADC 控制器节点保持 `okay`，但没有分配任何通道。I2C0 保持 Zep
 `thread_ota_nrf52.mcuboot_dcdc` 在 `e73_or_nd05/nrf52840` 上无需配置。
 DCDC/LDO 由 `&reg1` Devicetree 属性决定；板级 defconfig 不直接设置已废弃且
 无 prompt 的 `CONFIG_SOC_DCDC_NRF52X`，否则 NCS 2.9.2 的 Kconfig 配置会失败。
+板级同时与 Nordic 官方板一致，在 `pre_dt_board.cmake` 中仅抑制 nRF52
+固有共享寄存器地址产生的 `unique_unit_address_if_enabled` 警告，不关闭其他
+Devicetree 检查。
 
 `swd_rtt_logs: false` 可以只启用板级功能，不使用 RTT 日志。
 
