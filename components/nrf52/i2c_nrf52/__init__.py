@@ -3,9 +3,9 @@
 from pathlib import Path
 from typing import Any
 
+import esphome
 from esphome import pins
 import esphome.codegen as cg
-from esphome.components import i2c
 from esphome.components.zephyr import (
     add_extra_build_file,
     zephyr_add_overlay,
@@ -14,7 +14,10 @@ from esphome.components.zephyr import (
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_FREQUENCY,
+    CONF_I2C_ID,
     CONF_ID,
+    CONF_ADDRESS,
+    CONF_TIMEOUT,
     CONF_SCAN,
     CONF_SCL,
     CONF_SDA,
@@ -29,6 +32,11 @@ DEPENDENCIES = ["nrf52"]
 MULTI_CONF = True
 MULTI_CONF_NO_DEFAULT = True
 
+i2c_ns = cg.esphome_ns.namespace("i2c")
+I2CBus = i2c_ns.class_("I2CBus")
+I2CDevice = i2c_ns.class_("I2CDevice")
+ZephyrI2CBus = i2c_ns.class_("ZephyrI2CBus", I2CBus, cg.Component)
+
 CONF_HARDWARE_I2C = "hardware_i2c"
 PORT_NAMES = {"I2C0": 0, "I2C1": 1}
 SPI_CONFLICTS = {0: "spi0", 1: "spi1"}
@@ -36,8 +44,8 @@ SPI_CONFLICTS = {0: "spi0", 1: "spi1"}
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
-            cv.GenerateID(): cv.declare_id(i2c.ZephyrI2CBus),
-            cv.Required(CONF_HARDWARE_I2C): cv.one_of(*PORT_NAMES, upper=True),
+            cv.GenerateID(): cv.declare_id(ZephyrI2CBus),
+            cv.Optional(CONF_HARDWARE_I2C, default="I2C0"): cv.one_of(*PORT_NAMES, upper=True),
             cv.Required(CONF_SDA): pins.internal_gpio_pin_number,
             cv.Required(CONF_SCL): pins.internal_gpio_pin_number,
             cv.Optional(CONF_FREQUENCY, default="100kHz"): cv.frequency,
@@ -59,10 +67,11 @@ def _entries(value: Any) -> list[ConfigType]:
 
 def _final_validate(config: ConfigType) -> ConfigType:
     full = fv.full_config.get()
-    if "i2c" in full:
+    if "i2c" in full and "i2c_nrf52" in full:
         raise cv.Invalid("i2c and i2c_nrf52 cannot be configured together")
 
-    buses = _entries(full.get("i2c_nrf52"))
+    domain = "i2c" if "i2c" in full and "i2c_nrf52" not in full else "i2c_nrf52"
+    buses = _entries(full.get(domain))
     if len(buses) > len(PORT_NAMES):
         raise cv.Invalid("nRF52840 supports at most two i2c_nrf52 buses")
 
@@ -108,7 +117,7 @@ FINAL_VALIDATE_SCHEMA = _final_validate
 async def to_code(config: ConfigType) -> None:
     # Reuse ESPHome's generic I2C base and Zephyr bus implementation without
     # loading the official top-level `i2c:` integration.
-    i2c_source = Path(i2c.__file__).parent
+    i2c_source = Path(esphome.__file__).parent / "components" / "i2c"
     for filename in (
         "i2c.h",
         "i2c.cpp",
@@ -127,7 +136,7 @@ async def to_code(config: ConfigType) -> None:
     scl = config[CONF_SCL]
 
     cg.add_define("USE_I2C")
-    cg.add_global(i2c.i2c_ns.using)
+    cg.add_global(i2c_ns.using)
     zephyr_add_prj_conf("I2C", True)
     zephyr_add_overlay(
         f"""
@@ -167,3 +176,76 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_scl_pin(scl))
     cg.add(var.set_frequency(int(config[CONF_FREQUENCY])))
     cg.add(var.set_scan(config[CONF_SCAN]))
+
+
+def i2c_device_schema(default_address):
+    schema = {cv.GenerateID(CONF_I2C_ID): cv.use_id(I2CBus)}
+    if default_address is None:
+        schema[cv.Required(CONF_ADDRESS)] = cv.i2c_address
+    else:
+        schema[cv.Optional(CONF_ADDRESS, default=default_address)] = cv.i2c_address
+    return cv.Schema(schema)
+
+
+async def register_i2c_device(var, config):
+    await cg.add_variable(var.set_i2c_bus, config[CONF_I2C_ID])
+    cg.add(var.set_i2c_address(config[CONF_ADDRESS]))
+
+
+def new_i2c_component(config, *args):
+    return cg.new_bus_component(register_i2c_device, config, *args)
+
+
+def final_validate_device_schema(
+    name: str,
+    *,
+    min_frequency: Any = None,
+    max_frequency: Any = None,
+    min_timeout: Any = None,
+    max_timeout: Any = None,
+) -> cv.Schema:
+    hub_schema = {}
+    if min_frequency is not None and max_frequency is not None:
+        hub_schema[cv.Required(CONF_FREQUENCY)] = cv.Range(
+            min=cv.frequency(min_frequency),
+            min_included=True,
+            max=cv.frequency(max_frequency),
+            max_included=True,
+            msg=f"Component {name} requires an I2C frequency compatible with the bus",
+        )
+    elif min_frequency is not None:
+        hub_schema[cv.Required(CONF_FREQUENCY)] = cv.Range(
+            min=cv.frequency(min_frequency),
+            min_included=True,
+            msg=f"Component {name} requires I2C frequency >= {min_frequency}",
+        )
+    elif max_frequency is not None:
+        hub_schema[cv.Required(CONF_FREQUENCY)] = cv.Range(
+            max=cv.frequency(max_frequency),
+            max_included=True,
+            msg=f"Component {name} requires I2C frequency <= {max_frequency}",
+        )
+    if min_timeout is not None and max_timeout is not None:
+        hub_schema[cv.Required(CONF_TIMEOUT)] = cv.Range(
+            min=cv.time_period(min_timeout),
+            min_included=True,
+            max=cv.time_period(max_timeout),
+            max_included=True,
+            msg=f"Component {name} requires an I2C timeout compatible with the bus",
+        )
+    elif min_timeout is not None:
+        hub_schema[cv.Required(CONF_TIMEOUT)] = cv.Range(
+            min=cv.time_period(min_timeout),
+            min_included=True,
+            msg=f"Component {name} requires I2C timeout >= {min_timeout}",
+        )
+    elif max_timeout is not None:
+        hub_schema[cv.Required(CONF_TIMEOUT)] = cv.Range(
+            max=cv.time_period(max_timeout),
+            max_included=True,
+            msg=f"Component {name} requires I2C timeout <= {max_timeout}",
+        )
+    return cv.Schema(
+        {cv.Required(CONF_I2C_ID): fv.id_declaration_match_schema(hub_schema)},
+        extra=cv.ALLOW_EXTRA,
+    )

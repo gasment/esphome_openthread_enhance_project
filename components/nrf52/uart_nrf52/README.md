@@ -4,6 +4,9 @@
 使用独立的 `uart_nrf52` 组件域及 `esphome::uart_nrf52` 命名空间，
 类名保留 `UARTComponent` / `UARTDevice`。总线引用字段为 `uart_nrf52_id`，
 发送动作为 `uart_nrf52.write`，调试配置为总线下的 `debug`。
+本域保留为旧配置兼容入口。接替官方生态位时直接加载 `uart` 组件并使用
+官方字段 `uart:` / `uart_id`；实现类直接位于 `esphome::uart`，不再依赖
+本后缀域。详细配置见 `../uart/README.md`。
 没有修改安装的 ESPHome 源码；
 原始文件校验值保存在 `upstream.json`。升级 ESPHome 后需检查公共接口兼容性。
 
@@ -35,7 +38,8 @@ Python 外设适配导入 `esphome.components.uart_nrf52`，调用
 `register_uart_nrf52_device()`，继承 `UARTDevice` 并使用 `UART_DEVICE_SCHEMA`；
 C++ 引入 `esphome/components/uart_nrf52/uart_nrf52.h`，使用
 `uart_nrf52::UARTDevice` 和 `set_uart_nrf52_parent()`。
-标准 UART 外设依赖原 `uart` 模块及类型，需要适配后才能接入本组件。
+标准 UART 外设无需修改源码：同时加载同源 `uart` 兼容域后，原 `uart` 模块名、
+`uart_id`、`UART_DEVICE_SCHEMA` 和 C++ `uart::UARTDevice` 都会转发到本实现。
 硬件端口名 `UART0/UART1`、Zephyr 驱动接口及 Kconfig 名称保持不变。
 
 `hardware_uart` 可省略：先保留显式指定的端口，再按配置顺序分配空闲 UART0/UART1。

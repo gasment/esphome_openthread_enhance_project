@@ -31,6 +31,7 @@ from esphome.const import (
     CONF_TIMEOUT,
     CONF_TRIGGER_ID,
     CONF_TX_PIN,
+    CONF_UART_ID,
     PLATFORM_HOST,
     PlatformFramework,
 )
@@ -219,7 +220,8 @@ def final_validate_nrf52(config):
         full = fv.full_config.get()
         if "nrf52840" not in str(full["nrf52"]["board"]).lower():
             raise cv.Invalid("This external uart_nrf52 backend currently supports nRF52840")
-        ports = nrf52_ports(full["uart_nrf52"])
+        domain = "uart" if "uart" in full and "uart_nrf52" not in full else "uart_nrf52"
+        ports = nrf52_ports(full[domain])
         log = full.get("logger", {})
         if log.get("baud_rate", 0) and log.get("hardware_uart") in ("UART0", "UART1"):
             port = int(log["hardware_uart"][-1])
@@ -373,10 +375,16 @@ async def debug_to_code(config, parent):
 
 
 async def to_code(config):
+    await to_code_with_domain(config, "uart_nrf52")
+
+
+async def to_code_with_domain(config, domain):
     cg.add_global(uart_nrf52_ns.using)
     if CORE.is_nrf52:
         from .nrf52 import configure_uart
-        device, registers = configure_uart(config, nrf52_ports(CORE.config["uart_nrf52"])[str(config[CONF_ID])])
+        device, registers = configure_uart(
+            config, nrf52_ports(CORE.config[domain])[str(config[CONF_ID])]
+        )
         var = cg.new_Pvariable(config[CONF_ID], device, registers)
     else:
         var = cg.new_Pvariable(config[CONF_ID])
@@ -549,6 +557,11 @@ async def register_uart_nrf52_device(var, config):
     This is a coroutine, you need to await it with an 'await' expression!
     """
     parent = await cg.get_variable(config[CONF_UART_NRF52_ID])
+    cg.add(var.set_uart_nrf52_parent(parent))
+
+
+async def register_uart_device_compat(var, config):
+    parent = await cg.get_variable(config[CONF_UART_ID])
     cg.add(var.set_uart_nrf52_parent(parent))
 
 

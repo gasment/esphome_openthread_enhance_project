@@ -19,6 +19,12 @@ enum UARTParityOptions {
   UART_CONFIG_PARITY_ODD,
 };
 
+enum UARTFlowControl : uint8_t {
+  UART_FLOW_CONTROL_NONE,
+  UART_FLOW_CONTROL_RTS_CTS,
+  UART_FLOW_CONTROL_XON_XOFF,
+};
+
 #ifdef USE_UART_NRF52_DEBUGGER
 enum UARTDirection {
   UART_DIRECTION_RX,
@@ -61,6 +67,10 @@ class UARTComponent {
   // @param len Length of the array.
   virtual void write_array(const uint8_t *data, size_t len) = 0;
 
+  void write_array_progmem(const uint8_t *data, size_t len) {
+    this->write_array(data, len);
+  }
+
   // Reads a single byte from the uart_nrf52 bus.
   // @param data Pointer to the byte where the read data will be stored.
   // @return True if a byte was successfully read, false otherwise.
@@ -80,6 +90,8 @@ class UARTComponent {
   // Pure virtual method to return the number of bytes available for reading.
   // @return Number of available bytes.
   virtual size_t available() = 0;
+
+  virtual size_t available_for_write() { return SIZE_MAX; }
 
   // Pure virtual method to block until all bytes have been written to the uart_nrf52 bus.
   // @return UARTFlushResult indicating whether the flush was confirmed, timed out, failed, or assumed successful.
@@ -158,6 +170,9 @@ class UARTComponent {
   // @return Parity option.
   UARTParityOptions get_parity() const { return this->parity_; }
 
+  void set_flow_control(UARTFlowControl flow_control) { this->flow_control_ = flow_control; }
+  UARTFlowControl get_flow_control() const { return this->flow_control_; }
+
   // Set the baud rate for uart_nrf52 communication.
   // @param baud_rate Baud rate in bits per second.
   void set_baud_rate(uint32_t baud_rate) { baud_rate_ = baud_rate; }
@@ -204,6 +219,7 @@ class UARTComponent {
   InternalGPIOPin *tx_pin_{};
   InternalGPIOPin *rx_pin_{};
   InternalGPIOPin *flow_control_pin_{};
+  UARTFlowControl flow_control_{UART_FLOW_CONTROL_NONE};
   size_t rx_buffer_size_{};
   // ESP32 (both Arduino and ESP-IDF) always sets this at codegen time via set_rx_full_threshold().
   // Other platforms (USB uart_nrf52, Arduino, etc.) leave it unset.

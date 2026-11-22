@@ -1,5 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <optional>
+#include <type_traits>
 #include <vector>
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -15,6 +19,7 @@ class UARTDevice {
   UARTDevice(UARTComponent *parent) : parent_(parent) {}
 
   void set_uart_nrf52_parent(UARTComponent *parent) { this->parent_ = parent; }
+  void set_uart_parent(UARTComponent *parent) { this->parent_ = parent; }
 
   void write_byte(uint8_t data) { this->parent_->write_byte(data); }
 
@@ -25,6 +30,9 @@ class UARTDevice {
   size_t get_rx_timeout() { return this->parent_->get_rx_timeout(); }
 
   void write_array(const uint8_t *data, size_t len) { this->parent_->write_array(data, len); }
+  void write_array_progmem(const uint8_t *data, size_t len) {
+    this->parent_->write_array_progmem(data, len);
+  }
   void write_array(const std::vector<uint8_t> &data) { this->parent_->write_array(data); }
   template<size_t N> void write_array(const std::array<uint8_t, N> &data) {
     this->parent_->write_array(data.data(), data.size());
@@ -37,14 +45,56 @@ class UARTDevice {
 
   bool read_array(uint8_t *data, size_t len) { return this->parent_->read_array(data, len); }
   template<size_t N> optional<std::array<uint8_t, N>> read_array() {  // NOLINT
-    std::array<uint8_t, N> res;
-    if (!this->read_array(res.data(), N)) {
-      return {};
-    }
+    optional<std::array<uint8_t, N>> res(std::in_place);
+    if (!this->read_array(res->data(), N))
+      res.reset();
     return res;
   }
 
   size_t available() { return this->parent_->available(); }
+
+  template<size_t N = 64, typename F> bool read_available_chunks(F &&on_chunk) {
+    return this->read_available_chunks<N>(on_chunk, this->available());
+  }
+  template<size_t N = 64, typename F>
+  bool read_available_chunks(F &&on_chunk, size_t count) {
+    static_assert(N > 0, "read buffer size must be non-zero");
+    uint8_t buf[N];
+    while (count > 0) {
+      const size_t len = std::min(count, N);
+      if (!this->read_array(buf, len))
+        return false;
+      count -= len;
+      if (!continue_after(on_chunk, static_cast<const uint8_t *>(buf), len))
+        break;
+    }
+    return true;
+  }
+
+  template<size_t N = 64, typename F> bool read_available(F &&on_byte) {
+    return this->read_available<N>(on_byte, this->available());
+  }
+  template<size_t N = 64, typename F>
+  bool read_available(F &&on_byte, size_t count) {
+    return this->read_available_chunks<N>(
+        [&on_byte](const uint8_t *data, size_t len) {
+          for (const uint8_t *p = data; p != data + len; p++) {
+            if (!continue_after(on_byte, *p))
+              return false;
+          }
+          return true;
+        },
+        count);
+  }
+
+  void discard_available() {
+    uint8_t buffer[64];
+    while (this->available() > 0) {
+      const size_t count = std::min(this->available(), sizeof(buffer));
+      if (!this->read_array(buffer, count))
+        break;
+    }
+  }
 
   UARTFlushResult flush() { return this->parent_->flush(); }
 
@@ -66,10 +116,30 @@ class UARTDevice {
     return data;
   }
 
+ protected:
+  template<typename F, typename... A> static bool continue_after(F &f, A... args) {
+    using R = std::invoke_result_t<F &, A...>;
+    if constexpr (std::is_void_v<R>) {
+      f(args...);
+      return true;
+    } else {
+      static_assert(std::is_same_v<std::remove_cvref_t<R>, bool>,
+                    "callback must return void or bool");
+      return f(args...);
+    }
+  }
+
+ public:
   /// Check that the configuration of the uart_nrf52 bus matches the provided values and otherwise print a warning
   ESPDEPRECATED("Use uart_nrf52.final_validate_device_schema() in Python instead. Removed in 2027.3.0", "2026.9.0")
   void check_uart_nrf52_settings(uint32_t baud_rate, uint8_t stop_bits = 1,
                            UARTParityOptions parity = UART_CONFIG_PARITY_NONE, uint8_t data_bits = 8);
+  ESPDEPRECATED("Use uart.final_validate_device_schema() in Python instead.", "2026.9.0")
+  void check_uart_settings(uint32_t baud_rate, uint8_t stop_bits = 1,
+                           UARTParityOptions parity = UART_CONFIG_PARITY_NONE,
+                           uint8_t data_bits = 8) {
+    this->check_uart_nrf52_settings(baud_rate, stop_bits, parity, data_bits);
+  }
 
  protected:
   UARTComponent *parent_{nullptr};
