@@ -240,6 +240,32 @@ bool ThreadSleepManager::can_sleep() {
   return now >= success_until_ && now >= error_until_;
 }
 
+bool ThreadSleepManager::check_status(StatusFlag flag) {
+  switch (flag) {
+    case StatusFlag::PHASE_AWAKE:
+      return phase_ == Phase::AWAKE;
+    case StatusFlag::PHASE_ACTIVITY:
+      return phase_ == Phase::ACTIVITY;
+    case StatusFlag::PHASE_WAIT_RECONNECT:
+      return phase_ == Phase::WAIT_RECONNECT;
+    case StatusFlag::PHASE_REATTACHING:
+      return phase_ == Phase::REATTACHING;
+    case StatusFlag::PHASE_READY:
+      return phase_ == Phase::READY;
+    case StatusFlag::PHASE_SLEEPING:
+      return phase_ == Phase::SLEEPING;
+    case StatusFlag::LINK_READY:
+      return link_ready_();
+    case StatusFlag::TRANSPORT_BUSY:
+      return transport_busy_();
+    case StatusFlag::JOINER_ACTIVE:
+      return joiner_active_();
+    case StatusFlag::CAN_SLEEP:
+      return can_sleep();
+  }
+  return false;
+}
+
 void ThreadSleepManager::loop() {
   if (shutdown_ || is_failed())
     return;

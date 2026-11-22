@@ -4,6 +4,7 @@
 #include "esphome/components/deep_sleep_nrf52/deep_sleep_nrf52.h"
 #include "esphome/components/openthread_nrf52/openthread_nrf52.h"
 #include "esphome/components/output/binary_output.h"
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 
 #include <vector>
@@ -16,6 +17,19 @@
 #endif
 
 namespace esphome::thread_sleep_manager {
+
+enum class StatusFlag : uint8_t {
+  PHASE_AWAKE,
+  PHASE_ACTIVITY,
+  PHASE_WAIT_RECONNECT,
+  PHASE_REATTACHING,
+  PHASE_READY,
+  PHASE_SLEEPING,
+  LINK_READY,
+  TRANSPORT_BUSY,
+  JOINER_ACTIVE,
+  CAN_SLEEP,
+};
 
 class ThreadSleepManager final : public Component {
  public:
@@ -64,6 +78,7 @@ class ThreadSleepManager final : public Component {
   }
 
   bool can_sleep();
+  bool check_status(StatusFlag flag);
   Phase get_phase() const { return phase_; }
   uint32_t get_active_operations() const { return active_operations_; }
 
@@ -115,6 +130,17 @@ class ThreadSleepManager final : public Component {
   bool last_link_ready_{false};
   bool indicator_state_{false};
   bool shutdown_{false};
+};
+
+template<typename... Ts> class StatusCondition : public Condition<Ts...> {
+ public:
+  explicit StatusCondition(ThreadSleepManager *parent) : parent_(parent) {}
+  void set_flag(StatusFlag flag) { flag_ = flag; }
+  bool check(const Ts &...x) override { return parent_->check_status(flag_); }
+
+ protected:
+  ThreadSleepManager *parent_;
+  StatusFlag flag_{StatusFlag::PHASE_AWAKE};
 };
 
 }  // namespace esphome::thread_sleep_manager

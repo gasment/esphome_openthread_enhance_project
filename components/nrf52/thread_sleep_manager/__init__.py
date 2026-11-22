@@ -2,6 +2,7 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import automation
 from esphome.components import binary_sensor, output
 from esphome.components.deep_sleep_nrf52 import DeepSleepComponent
 from esphome.components.openthread_nrf52 import OpenThreadComponent
@@ -17,6 +18,21 @@ ThreadProxyClient = cg.esphome_ns.namespace("thread_proxy_client_nrf52").class_(
 ThreadP2PTransporter = cg.esphome_ns.namespace(
     "thread_p2p_transporter_nrf52"
 ).class_("ThreadP2PTransporter", cg.Component)
+StatusFlag = ns.enum("StatusFlag")
+StatusCondition = ns.class_("StatusCondition", automation.Condition)
+
+STATUS_CONDITIONS = {
+    "is_awake": "PHASE_AWAKE",
+    "is_activity": "PHASE_ACTIVITY",
+    "is_wait_reconnect": "PHASE_WAIT_RECONNECT",
+    "is_reattaching": "PHASE_REATTACHING",
+    "is_ready": "PHASE_READY",
+    "is_sleeping": "PHASE_SLEEPING",
+    "link_ready": "LINK_READY",
+    "transport_busy": "TRANSPORT_BUSY",
+    "joiner_active": "JOINER_ACTIVE",
+    "can_sleep": "CAN_SLEEP",
+}
 
 
 def validate(config):
@@ -91,3 +107,23 @@ async def to_code(config):
     ))
 
     cg.add_define("USE_THREAD_SLEEP_MANAGER")
+
+
+def register_status_condition(name, flag):
+    @automation.register_condition(
+        f"thread_sleep_manager.{name}",
+        StatusCondition,
+        cv.maybe_simple_value(
+            {cv.GenerateID(): cv.use_id(ThreadSleepManager)}, key=CONF_ID
+        ),
+    )
+    async def status_condition_to_code(config, condition_id, template_arg, args):
+        var = cg.new_Pvariable(
+            condition_id, template_arg, await cg.get_variable(config[CONF_ID])
+        )
+        cg.add(var.set_flag(flag))
+        return var
+
+
+for _name, _flag in STATUS_CONDITIONS.items():
+    register_status_condition(_name, getattr(StatusFlag, _flag))
