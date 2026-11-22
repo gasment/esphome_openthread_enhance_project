@@ -32,16 +32,3 @@ Third-party components that declare `DEPENDENCIES = ["i2c"]`, call
 without source changes. The external `i2c` is expected to appear in ESPHome's
 "overriding built-in components" list.
 
-The separately maintained `i2c_nrf52` domain remains available for backward
-compatibility, but it is not part of the official-slot replacement:
-
-```yaml
-i2c_nrf52:
-  id: sensor_bus
-  hardware_i2c: I2C0
-  sda: P0.02
-  scl: P0.03
-```
-
-Do not configure `i2c` and `i2c_nrf52` instances together in one build.
-

@@ -40,17 +40,3 @@ The Python classes and C++ implementation are defined directly in
 `esphome::uart`. The external `uart` is expected to appear in ESPHome's
 "overriding built-in components" list.
 
-The separately maintained `uart_nrf52` domain remains available for backward
-compatibility, but it is not part of the official-slot replacement:
-
-```yaml
-uart_nrf52:
-  id: uart_bus
-  tx_pin: P0.06
-  rx_pin: P0.08
-  baud_rate: 9600
-```
-
-Do not configure `uart` and `uart_nrf52` buses as two separate implementations
-in the same build.
-

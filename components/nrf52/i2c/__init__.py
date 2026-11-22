@@ -68,13 +68,9 @@ def _entries(value: Any) -> list[ConfigType]:
 
 def _final_validate(config: ConfigType) -> ConfigType:
     full = fv.full_config.get()
-    if "i2c" in full and "i2c_nrf52" in full:
-        raise cv.Invalid("i2c and i2c_nrf52 cannot be configured together")
-
-    domain = "i2c" if "i2c" in full and "i2c_nrf52" not in full else "i2c_nrf52"
-    buses = _entries(full.get(domain))
+    buses = _entries(full.get("i2c"))
     if len(buses) > len(PORT_NAMES):
-        raise cv.Invalid("nRF52840 supports at most two i2c_nrf52 buses")
+        raise cv.Invalid("nRF52840 supports at most two i2c buses")
 
     used_ports: set[int] = set()
     used_pins: dict[int, tuple[str, str]] = {}
@@ -82,7 +78,7 @@ def _final_validate(config: ConfigType) -> ConfigType:
         port = PORT_NAMES[bus[CONF_HARDWARE_I2C]]
         if port in used_ports:
             raise cv.Invalid(
-                f"{bus[CONF_HARDWARE_I2C]} is assigned to multiple i2c_nrf52 buses"
+                f"{bus[CONF_HARDWARE_I2C]} is assigned to multiple i2c buses"
             )
         used_ports.add(port)
 
@@ -123,7 +119,6 @@ async def to_code(config: ConfigType) -> None:
         "i2c.h",
         "i2c.cpp",
         "i2c_bus.h",
-        "i2c_bus.cpp",
         "i2c_bus_zephyr.h",
         "i2c_bus_zephyr.cpp",
     ):

@@ -171,7 +171,7 @@ void HostUartComponent::setup() {
 }
 
 void HostUartComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "uart_nrf52:");
+  ESP_LOGCONFIG(TAG, "uart:");
   ESP_LOGCONFIG(TAG, "  Port: %s", this->port_name_.c_str());
   if (this->file_descriptor_ == -1) {
     ESP_LOGCONFIG(TAG, "  Port status: Not opened");

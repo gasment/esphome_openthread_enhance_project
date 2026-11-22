@@ -56,8 +56,8 @@ USB、LED、按键或 Feather connector。
 
 ADC 控制器节点保持 `okay`，但没有分配任何通道。I2C0 保持 Zephyr 默认的
 `disabled`，因为 TWIM binding 要求启用时必须提供 `pinctrl-0`。后续配置
-`i2c_nrf52` 时，组件会生成 SDA/SCL pinctrl 并启用对应 I2C 节点；没有对应
-组件时不会编译驱动，也不会产生 IO 行为。`uart_nrf52` 和 SPI 组件会自行启用
+`i2c` 时，组件会生成 SDA/SCL pinctrl 并启用对应 I2C 节点；没有对应
+组件时不会编译驱动，也不会产生 IO 行为。`uart` 和 SPI 组件会自行启用
 所需节点。
 
 板级 DTS 同时被应用和 MCUboot 镜像继承，因此 REG1 LDO 对两个镜像都生效，
