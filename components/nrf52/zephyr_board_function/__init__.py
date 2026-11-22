@@ -1,18 +1,25 @@
-"""Project SWD/RTT logging, without a physical UART or USB CDC logger."""
+"""Project nRF52 board profiles and optional SWD/RTT logging."""
 
+import os
+from pathlib import Path
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import logger
-from esphome.components.zephyr import zephyr_add_prj_conf
+from esphome.components.zephyr import zephyr_add_prj_conf, zephyr_data
 from esphome.const import CONF_ID
 from esphome.core import CORE, CoroPriority, coroutine_with_priority
 
 DEPENDENCIES = ["nrf52", "logger"]
-# The installed debug component selects blocking RTT; do not combine the profiles.
-CONFLICTS_WITH = ["debug"]
+CONF_SWD_RTT_LOGS = "swd_rtt_logs"
+CONF_E73_OR_ND05_BOARD_CONFIG = "e73_or_nd05_board_config"
 CONF_FAULT_DIAGNOSTICS = "fault_diagnostics"
+CUSTOM_BOARD = "e73_or_nd05/nrf52840"
 CONFIG_SCHEMA = cv.All(
-    cv.Schema({cv.Optional(CONF_FAULT_DIAGNOSTICS, default=False): cv.boolean}),
+    cv.Schema({
+        cv.Optional(CONF_SWD_RTT_LOGS, default=True): cv.boolean,
+        cv.Optional(CONF_E73_OR_ND05_BOARD_CONFIG, default=False): cv.boolean,
+        cv.Optional(CONF_FAULT_DIAGNOSTICS, default=False): cv.boolean,
+    }),
     cv.only_on_nrf52,
     cv.only_with_framework("zephyr"),
 )
@@ -21,10 +28,46 @@ CONFIG_SCHEMA = cv.All(
 def final_validate(config):
     from esphome import final_validate as fv
 
-    if fv.full_config.get()["logger"].get("baud_rate", 115200) != 0:
-        raise cv.Invalid("swd_rtt_nrf52 requires logger.baud_rate: 0 to release physical logging ports")
-    if fv.full_config.get()["logger"].get("task_log_buffer_size", 768) == 0:
-        raise cv.Invalid("swd_rtt_nrf52 requires logger.task_log_buffer_size > 0 for worker-thread logs")
+    board = zephyr_data()["board"]
+    board_profile = config[CONF_E73_OR_ND05_BOARD_CONFIG]
+    if board_profile and board != CUSTOM_BOARD:
+        raise cv.Invalid(
+            f"{CONF_E73_OR_ND05_BOARD_CONFIG}: true requires "
+            f"nrf52.board: {CUSTOM_BOARD}"
+        )
+    if board == CUSTOM_BOARD and not board_profile:
+        raise cv.Invalid(
+            f"nrf52.board: {CUSTOM_BOARD} requires "
+            f"zephyr_board_function.{CONF_E73_OR_ND05_BOARD_CONFIG}: true"
+        )
+    if (
+        board == CUSTOM_BOARD
+        and (fv.full_config.get().get("nrf52") or {}).get("dcdc") is True
+    ):
+        raise cv.Invalid(
+            f"nrf52.board: {CUSTOM_BOARD} fixes REG1 to LDO; "
+            "nrf52.dcdc: true is not supported"
+        )
+
+    if config[CONF_SWD_RTT_LOGS]:
+        if "debug" in fv.full_config.get():
+            raise cv.Invalid(
+                "zephyr_board_function.swd_rtt_logs cannot be combined with debug"
+            )
+        if fv.full_config.get()["logger"].get("baud_rate", 115200) != 0:
+            raise cv.Invalid(
+                "zephyr_board_function.swd_rtt_logs requires logger.baud_rate: 0 "
+                "to release physical logging ports"
+            )
+        if fv.full_config.get()["logger"].get("task_log_buffer_size", 768) == 0:
+            raise cv.Invalid(
+                "zephyr_board_function.swd_rtt_logs requires "
+                "logger.task_log_buffer_size > 0 for worker-thread logs"
+            )
+    elif config[CONF_FAULT_DIAGNOSTICS]:
+        raise cv.Invalid(
+            f"{CONF_FAULT_DIAGNOSTICS} requires {CONF_SWD_RTT_LOGS}: true"
+        )
     return config
 
 
@@ -33,11 +76,27 @@ FINAL_VALIDATE_SCHEMA = final_validate
 
 @coroutine_with_priority(CoroPriority.EARLY_INIT - 1)
 async def to_code(config):
+    if config[CONF_E73_OR_ND05_BOARD_CONFIG]:
+        # BOARD_ROOT points to a directory containing a "boards" child. This
+        # component is the root, while the target lives under boards/e73_or_nd05.
+        board_root = Path(__file__).parent
+        existing = os.environ.get("BOARD_ROOT")
+        board_root_value = (
+            f"{board_root};{existing}" if existing else str(board_root)
+        )
+        # Zephyr consumes CMake's BOARD_ROOT. Keep the prefixed environment
+        # variable as a project-level alias for diagnostics and wrappers.
+        os.environ["BOARD_ROOT"] = board_root_value
+        os.environ["ZEPHYR_BOARD_ROOT"] = board_root_value
+
+    if not config[CONF_SWD_RTT_LOGS]:
+        return
+
     # baud_rate=0 also suppresses Logger::write_msg_(). Use the public listener
     # interface, which still receives formatted messages before that gate.
     logger.request_log_listener()
     log = await cg.get_variable(CORE.config["logger"][CONF_ID])
-    cg.add(cg.RawStatement(f"swd_rtt_nrf52::install_log_bridge({log});"))
+    cg.add(cg.RawStatement(f"zephyr_board_function::install_log_bridge({log});"))
     # Platform defaults must be emitted before the final RTT Kconfig overrides.
     CORE.add_job(configure_rtt, config[CONF_FAULT_DIAGNOSTICS])
 

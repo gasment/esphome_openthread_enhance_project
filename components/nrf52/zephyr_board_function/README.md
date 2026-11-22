@@ -1,9 +1,42 @@
-# SWD + RTT 日志
+# Zephyr 板级功能与 SWD + RTT 日志
 
-同一组 SWD 接线完成烧写和日志读取，无需 UART TX/RX 或目标 USB CDC。
+同一组件管理项目原生 nRF52840 板级和 SWD/RTT 日志。同一组 SWD 接线完成
+烧写和日志读取，无需 UART TX/RX 或目标 USB CDC。
 适配当前 ESPHome 2026.9.1 / NCS 2.9.2，不修改安装的 ESPHome 源码。
 
-## 配置与原理
+## 配置
+
+```yaml
+zephyr_board_function:
+  swd_rtt_logs: true
+  e73_or_nd05_board_config: true
+
+nrf52:
+  board: e73_or_nd05/nrf52840
+  bootloader: mcuboot
+
+# thread_ota_nrf52 可保留，但无需配置 mcuboot_dcdc。
+# e73_or_nd05 板级已同时固定应用和 MCUboot 的 LDO。
+```
+
+`e73_or_nd05_board_config: true` 时，本组件把自身目录（其中包含 `boards/`）加入
+Zephyr CMake 的 `BOARD_ROOT`，并同步设置 `ZEPHYR_BOARD_ROOT` 环境变量。
+YAML 的 `nrf52.board` 直接使用 `e73_or_nd05/nrf52840`，不需要其他板级字段。
+
+板级只包含 nRF52840 SoC、Flash/RAM 分区、GPIO、IEEE 802.15.4 和 REG1
+LDO，不分配任何预设 pin、pinctrl 或 ADC channel，也不预设 UART、SPI、QSPI、
+USB、LED、按键或 Feather connector。
+
+I2C0 和 ADC 控制器节点保持 `okay`，但没有任何引脚和通道。这样后续显式添加
+ESPHome `i2c` 或 `battery_level_nrf52` 时可以直接使用；没有对应组件时不会
+编译驱动，也不会产生 IO 行为。`uart_nrf52` 和 SPI 组件会自行启用所需节点。
+
+板级 DTS 同时被应用和 MCUboot 镜像继承，因此 REG1 LDO 对两个镜像都生效，
+`thread_ota_nrf52.mcuboot_dcdc` 在 `e73_or_nd05/nrf52840` 上无需配置。
+
+`swd_rtt_logs: false` 可以只启用板级功能，不使用 RTT 日志。
+
+## RTT 原理
 
 参见根目录 `swd_rtt_loger.yaml`。要求 `logger.baud_rate: 0`，
 `task_log_buffer_size` 大于 0（默认 768），不能同时加载会强制阻塞 RTT 的 `debug`。
@@ -59,7 +92,7 @@ python esphome_nrf52.py logs config.yaml --device pyocd --reset
 
 ## 验证和限制
 
-启动后应看到 `[swd_rtt_nrf52] ESPHome log bridge ready`，随后是 ESPHome 配置和
+启动后应看到 `[zephyr_board_function] ESPHome log bridge ready`，随后是 ESPHome 配置和
 实体日志。桥接安装前 logger 的 pre_setup 日志不经回调转发；Zephyr 启动日志独立于
 桥接。MCUboot 是独立镜像，本组件没有为它配置 RTT。
 桥接安装后还会以 INFO 级别打印 LFCLK 运行状态、时钟源及 LFCLKSTAT/LFCLKSRC 原始值。

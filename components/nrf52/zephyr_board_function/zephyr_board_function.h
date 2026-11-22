@@ -6,15 +6,15 @@
 #include <zephyr/sys/printk.h>
 #include <cstring>
 
-namespace esphome::swd_rtt_nrf52 {
+namespace esphome::zephyr_board_function {
 
 // Read only. A bootloader/debugger may already have cleared these bits;
 // zero does not prove a power-on reset, and uncleared bits can accumulate.
 inline void log_reset_status() {
   const uint32_t reason = NRF_POWER->RESETREAS;
-  ESP_LOGI("swd_rtt_nrf52", "RESETREAS=0x%08lx (raw, may be retained/cleared by bootloader)",
+  ESP_LOGI("zephyr_board_function", "RESETREAS=0x%08lx (raw, may be retained/cleared by bootloader)",
            static_cast<unsigned long>(reason));
-  ESP_LOGI("swd_rtt_nrf52", "Reset flags: pin=%d watchdog=%d software=%d lockup=%d system_off=%d",
+  ESP_LOGI("zephyr_board_function", "Reset flags: pin=%d watchdog=%d software=%d lockup=%d system_off=%d",
            (reason & POWER_RESETREAS_RESETPIN_Msk) != 0,
            (reason & POWER_RESETREAS_DOG_Msk) != 0,
            (reason & POWER_RESETREAS_SREQ_Msk) != 0,
@@ -42,7 +42,7 @@ inline void log_lfclk_status() {
       name = "LFSYNT (HFCLK derived)";
       break;
   }
-  ESP_LOGI("swd_rtt_nrf52", "LFCLK: running=%s, source=%s, LFCLKSTAT=0x%08lx, LFCLKSRC=0x%08lx",
+  ESP_LOGI("zephyr_board_function", "LFCLK: running=%s, source=%s, LFCLKSTAT=0x%08lx, LFCLKSRC=0x%08lx",
            running ? "YES" : "NO", name, static_cast<unsigned long>(status), static_cast<unsigned long>(configured));
 }
 
@@ -57,16 +57,16 @@ inline void install_log_bridge(logger::Logger *log) {
         (std::strstr(message, "USB_CDC is not ready.") != nullptr ||
          std::strstr(message, "UART0 is not ready.") != nullptr ||
          std::strstr(message, "UART1 is not ready.") != nullptr)) {
-      printk("[swd_rtt_nrf52] Physical logger port disabled; RTT active\n");
+      printk("[zephyr_board_function] Physical logger port disabled; RTT active\n");
       return;
     }
     // Do not call ESP_LOG here: that would recurse into the logger. printk is
     // queued by LOG_PRINTK and drained by Zephyr's nonblocking RTT backend.
     printk("%.*s\n", static_cast<int>(length), message);
   });
-  printk("[swd_rtt_nrf52] ESPHome log bridge ready\n");
+  printk("[zephyr_board_function] ESPHome log bridge ready\n");
   log_reset_status();
   log_lfclk_status();
 }
 
-}  // namespace esphome::swd_rtt_nrf52
+}  // namespace esphome::zephyr_board_function

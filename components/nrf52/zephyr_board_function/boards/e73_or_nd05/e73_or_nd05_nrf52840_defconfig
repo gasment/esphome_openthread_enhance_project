@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+CONFIG_ARM_MPU=y
+CONFIG_GPIO=y
+CONFIG_SOC_DCDC_NRF52X=n

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_E73_OR_ND05
+	select SOC_NRF52840_QIAA

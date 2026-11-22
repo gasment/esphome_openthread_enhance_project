@@ -1,6 +1,4 @@
 """Independent nRF52/Zephyr OpenThread integration (ESPHome 2026.9.1)."""
-from pathlib import Path
-
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv

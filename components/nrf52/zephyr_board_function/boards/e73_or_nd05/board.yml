@@ -1,0 +1,6 @@
+board:
+  name: e73_or_nd05
+  full_name: Ebyte E73-2G4M08S1CX / RF-STAR RF-BM-ND05I carrier
+  vendor: gasment
+  socs:
+    - name: nrf52840
