@@ -94,6 +94,10 @@ auto 由实体发布状态/事件触发批次发送，ACK 策略和回调只在�
 - 首次启动必须获得 BR 回复。保存的 BR 仅作为快速探测候选，不把旧 HA 地址或未经确认的缓存地址当作就绪连接。
 - 默认使用首个有效 BR，保持当前 BR；ACK 超时/重新入网后重选。不是按 RSSI、距离或负载持续优选。
 
+`thread_sleep_manager` 可直接绑定本组件。C++ 侧提供 `is_link_ready()`、
+`has_pending_operations()` 和 activity/ready/disconnect 回调；链路就绪不包含
+“当前是否有发送批次”，因此管理器不会把正常忙状态误判为 BR 掉线。
+
 加密可选，未配置即明文：
 
 ```yaml

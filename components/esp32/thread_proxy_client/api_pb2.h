@@ -911,7 +911,11 @@ class ListEntitiesFanResponse final : public InfoResponseProtoMessage {
   bool supports_speed{false};
   bool supports_direction{false};
   int32_t supported_speed_count{0};
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  const ConstVector<const char *, true> *supported_preset_modes{};
+#else
   const std::vector<const char *> *supported_preset_modes{};
+#endif
   static uint8_t *encode_msg(const void *self, uint8_t *pos PROTO_ENCODE_DEBUG_PARAM);
   uint8_t *encode(ProtoWriteBuffer &buffer PROTO_ENCODE_DEBUG_PARAM) const {
     return encode_msg(this, buffer.get_pos() PROTO_ENCODE_DEBUG_ARG);
@@ -987,7 +991,11 @@ class ListEntitiesLightResponse final : public InfoResponseProtoMessage {
   const light::ColorModeMask *supported_color_modes{};
   float min_mireds{0.0f};
   float max_mireds{0.0f};
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  const light::LightEffectNames *effects{};
+#else
   const FixedVector<const char *> *effects{};
+#endif
   static uint8_t *encode_msg(const void *self, uint8_t *pos PROTO_ENCODE_DEBUG_PARAM);
   uint8_t *encode(ProtoWriteBuffer &buffer PROTO_ENCODE_DEBUG_PARAM) const {
     return encode_msg(this, buffer.get_pos() PROTO_ENCODE_DEBUG_ARG);
@@ -1508,9 +1516,15 @@ class ListEntitiesClimateResponse final : public InfoResponseProtoMessage {
   bool supports_action{false};
   const climate::ClimateFanModeMask *supported_fan_modes{};
   const climate::ClimateSwingModeMask *supported_swing_modes{};
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  const ConstVector<const char *, true> *supported_custom_fan_modes{};
+  const climate::ClimatePresetMask *supported_presets{};
+  const ConstVector<const char *, true> *supported_custom_presets{};
+#else
   const std::vector<const char *> *supported_custom_fan_modes{};
   const climate::ClimatePresetMask *supported_presets{};
   const std::vector<const char *> *supported_custom_presets{};
+#endif
   float visual_current_temperature_step{0.0f};
   bool supports_current_humidity{false};
   bool supports_target_humidity{false};
@@ -3192,7 +3206,11 @@ class ListEntitiesEventResponse final : public InfoResponseProtoMessage {
   const LogString *message_name() const override { return LOG_STR("list_entities_event_response"); }
 #endif
   StringRef device_class{nullptr, 0};  // null until set, encode only
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  const ConstVector<const char *, true> *event_types{};
+#else
   const FixedVector<const char *> *event_types{};
+#endif
   static uint8_t *encode_msg(const void *self, uint8_t *pos PROTO_ENCODE_DEBUG_PARAM);
   uint8_t *encode(ProtoWriteBuffer &buffer PROTO_ENCODE_DEBUG_PARAM) const {
     return encode_msg(this, buffer.get_pos() PROTO_ENCODE_DEBUG_ARG);

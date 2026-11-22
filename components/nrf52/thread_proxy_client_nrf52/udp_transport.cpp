@@ -57,8 +57,7 @@ void ProxyUdpTransport::set_key(const std::array<uint8_t,32> &key) {
 #endif
 }
 void ProxyUdpTransport::setup(uint16_t port) {
-  const std::string mac=get_mac_address();
-  for(size_t i=0;i<6;i++) mac_[i]=(hexbyte(mac[i*2])<<4)|hexbyte(mac[i*2+1]);
+  get_mac_address_raw(mac_.data());
   const char *fingerprint=THREAD_PROXY_CLIENT_NRF52_SCHEMA;
   for(size_t i=0;i<16;i++) schema_[i]=(hexbyte(fingerprint[i*2])<<4)|hexbyte(fingerprint[i*2+1]);
   if (!random_bytes(boot_.data(),boot_.size())) { owner_->mark_failed(); return; }

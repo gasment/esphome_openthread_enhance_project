@@ -152,6 +152,10 @@ Zephyr 使用 `k_msgq` 保存报文指针，OT 回调只检查长度、复制及
 等待 ACK 时应用应保持运行，SED 的轮询周期应与 ACK 超时匹配。
 组件不自动调整 `poll_period`，也不自动阻止或管理 MCU 休眠。
 
+`thread_sleep_manager` 可通过 `p2p_transporter_id` 绑定本组件。组件公开
+`is_ready()`、`is_busy()`、`pending_count()` 和 activity 回调；无 ACK 的同步
+提交也会成对报告 activity start/finish，供统一休眠状态机等待发送动作结束。
+
 ## 已验证范围
 
 2026-11-06：移除必须配置 `openthread_nrf52.device_type: MTD` 的校验，

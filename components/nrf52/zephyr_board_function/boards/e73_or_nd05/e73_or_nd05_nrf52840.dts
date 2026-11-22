@@ -1,0 +1,59 @@
+/*
+ * Minimal nRF52840 board for the Ebyte E73-2G4M08S1CX and
+ * RF-STAR RF-BM-ND05I modules on a project-specific carrier.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <nordic/nrf52840_qiaa.dtsi>
+#include <nordic/nrf52840_partition.dtsi>
+#include <zephyr/dt-bindings/regulator/nrf5x.h>
+
+/ {
+	model = "E73-2G4M08S1CX / RF-BM-ND05I nRF52840";
+	compatible = "gasment,e73-or-nd05-nrf52840";
+
+	chosen {
+		zephyr,entropy = &cryptocell;
+		zephyr,flash-controller = &flash_controller;
+		zephyr,ieee802154 = &ieee802154;
+	};
+
+	aliases {
+		watchdog0 = &wdt0;
+	};
+};
+
+/*
+ * LDO is intentional and applies to both the application and MCUboot image
+ * because both images inherit this board devicetree.
+ */
+&reg1 {
+	regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
+};
+
+/*
+ * Controller nodes only. No pins, pinctrl states or ADC channels are assigned.
+ * ESPHome I2C/ADC components can use these controllers when explicitly loaded.
+ */
+&adc {
+	status = "okay";
+};
+
+&gpiote {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&ieee802154 {
+	status = "okay";
+};

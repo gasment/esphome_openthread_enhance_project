@@ -185,10 +185,12 @@ bool ProxyClient::forward_() {
 }
 
 void ThreadProxyAPI::setup() {
+  char proxy_id[MAC_ADDRESS_BUFFER_SIZE];
+  get_mac_address_into_buffer(proxy_id);
+  proxy_id_ = proxy_id;
   char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
   get_mac_address_pretty_into_buffer(mac);
   mac_ = mac;
-  proxy_id_ = get_mac_address();
   clients_.reserve(max_connections_);
   TaskHandle_t handle = nullptr;
   // RCP-backed OT getters can wait on Spinel; keep them off ESPHome's main loop.

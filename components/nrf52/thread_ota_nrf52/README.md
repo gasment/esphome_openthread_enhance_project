@@ -2,7 +2,8 @@
 
 `thread_ota_nrf52` enables Zephyr MCUmgr over Thread UDP/IPv6 (port 1337) and
 NCS 2.9.2's compressed MCUboot image support. It is currently restricted to
-`adafruit_feather_nrf52840/nrf52840` and the project-local
+`adafruit_feather_nrf52840/nrf52840` or the project-local
+`e73_or_nd05/nrf52840` board and the project-local
 `nrf52840-wireless-bt-mtd/esphome_nrf52.py` wrapper.
 
 The static internal-flash layout keeps the board's existing storage area at
@@ -64,7 +65,8 @@ Each read returns up to 160 bytes with a boot identifier, byte cursor, and
 overwrite count. Reads are non-destructive, supporting retry and multiple
 viewers. The host replays the available buffer, follows new lines, and retries
 or reconnects without duplicating previously consumed bytes. On overflow it
-reports lost bytes. With no viewer, no log traffic is sent. If `swd_rtt_nrf52`
+reports lost bytes. With no viewer, no log traffic is sent. If
+`zephyr_board_function.swd_rtt_logs`
 is absent, this component installs its own ESPHome-to-Zephyr log bridge.
 
 The firmware must include this log backend before wireless `logs` can work;

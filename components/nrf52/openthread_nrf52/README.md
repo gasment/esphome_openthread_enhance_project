@@ -186,7 +186,8 @@ FTD 和 MTD 均可配置。此字段设置 OpenThread 编译日志等级，与 E
 独立；logger 仍控制本组件自己的 ESP_LOG 日志。修改需要重新编译刷入。
 组件设置 OPENTHREAD_DEBUG 总开关并选择对应的 CRIT/WARN/NOTE/INFO/DEBG Kconfig；
 NONE 只关闭 OT 栈日志，不关闭其他 Zephyr 日志。非 NONE 时启用 Zephyr LOG。
-已有 swd_rtt_nrf52 后端会把 OT 平台日志输出到 RTT，无需配置物理 UART。
+已有 `zephyr_board_function.swd_rtt_logs` 后端会把 OT 平台日志输出到 RTT，
+无需配置物理 UART。
 
 不再拦截原生 CMake 生成入口，平台 PCH 和构建环境完全沿用安装版 ESPHome。
 
