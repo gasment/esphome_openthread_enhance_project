@@ -62,6 +62,8 @@ ADC 控制器节点保持 `okay`，但没有分配任何通道。I2C0 保持 Zep
 
 板级 DTS 同时被应用和 MCUboot 镜像继承，因此 REG1 LDO 对两个镜像都生效，
 `thread_ota_nrf52.mcuboot_dcdc` 在 `e73_or_nd05/nrf52840` 上无需配置。
+DCDC/LDO 由 `&reg1` Devicetree 属性决定；板级 defconfig 不直接设置已废弃且
+无 prompt 的 `CONFIG_SOC_DCDC_NRF52X`，否则 NCS 2.9.2 的 Kconfig 配置会失败。
 
 `swd_rtt_logs: false` 可以只启用板级功能，不使用 RTT 日志。
 
