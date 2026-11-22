@@ -47,6 +47,58 @@ thread_sleep_manager:
   joiner_blink_interval: 500ms
 ```
 
+## Timing and indicator parameters
+
+### Wake-cycle and reconnect deadlines
+
+| Parameter | Definition |
+|---|---|
+| `wake_timeout` | Hard upper bound for one cold-boot or wake cycle. The manager forces the phase to `READY` after this duration so a missing callback or forgotten send cannot leave the node awake forever. Active transport operations still keep `can_sleep` false after the timeout. |
+| `reconnect_after` | Reconnect grace period. When there is no active operation and OpenThread or a bound transport is unavailable, the manager waits this long before requesting `openthread_nrf52.reattach()`. Joiner activity freezes the timer. |
+| `reconnect_timeout` | Additional window after reattach has been requested. If the link recovers sooner, normal activity processing resumes; otherwise the manager forces `READY` at this deadline. Joiner activity freezes this timer too. |
+
+With the defaults, the worst reconnect path is approximately
+`reconnect_after + reconnect_timeout = 30s`, earlier than `wake_timeout = 45s`.
+
+### Send completion and indicator timing
+
+| Parameter | Definition |
+|---|---|
+| `quiet_delay` | Minimum quiet period after the last transport activity completes. It gives immediately following events and callbacks a chance to run before the cycle becomes `READY`. |
+| `activity_blink_duration` | One activity pulse at the start of a transport operation. It does not keep the LED on for the whole send and does not define the end of the operation. |
+| `success_duration` | Duration of the success indication after a successful transport completion. Sleep is also held for this period. |
+| `error_blinks` | Number of error LED blink cycles. |
+| `error_blink_interval` | Duration of one half-period of the error pattern. One complete ON+OFF cycle takes `2 × error_blink_interval`. |
+| `joiner_blink_interval` | Duration of one half-period of the joiner pattern. One complete ON+OFF cycle takes `2 × joiner_blink_interval`. This only controls the visual pattern; OpenThread joiner state itself blocks sleep and freezes reconnect timing. |
+
+The main timing relationships are:
+
+```text
+success hold = max(quiet_delay, success_duration)
+error hold   = error_blinks × error_blink_interval × 2
+joiner cycle = joiner_blink_interval × 2
+```
+
+Examples with the defaults:
+
+```text
+success hold = max(200ms, 500ms) = 500ms
+error hold   = 3 × 200ms × 2 = 1200ms
+joiner LED   = 1000ms ON + 1000ms OFF when joiner_blink_interval is 1000ms
+```
+
+The error pattern for `error_blinks: 3` and
+`error_blink_interval: 200ms` is:
+
+```text
+ON 200ms -> OFF 200ms -> ON 200ms -> OFF 200ms -> ON 200ms -> OFF 200ms
+```
+
+An ACK followed by the default success indication therefore enters `READY`
+about 500ms after the ACK. The actual System ON entry may be tens of
+milliseconds later while the DeepSleep guard closes transport work and runs
+the sleep preparation.
+
 `binary_sensor_input` accepts multiple IDs. The logical OR of their states is
 used: any ON holds the LED on, and all OFF release it.
 
@@ -124,7 +176,7 @@ The following conditions inspect these values without creating an entity:
 Important transitions and override rules:
 
 - A successful send starts the success indication. The manager enters `READY`
-  after `quiet_delay` and `success_duration`.
+  after both `quiet_delay` and `success_duration` have elapsed.
 - A failed send starts the error indication. If the link remains usable, the
   failure is treated as a terminal operation and the manager eventually enters
   `READY`; if the link is unavailable, it enters `WAIT_RECONNECT`.
