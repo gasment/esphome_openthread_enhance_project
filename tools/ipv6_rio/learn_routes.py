@@ -20,6 +20,9 @@ PROTOCOL = "9"  # RTPROT_RA. Ownership is tracked separately; never flush proto 
 PREFERENCES = {1: "high", 0: "medium", 3: "low"}
 # Separate preference tiers so Linux cannot merge different prefs into one ECMP.
 PREFERENCE_RANK = {1: 0, 0: 1, 3: 2}
+FORWARDING_RETRY_DELAY = 120
+PROBE_TARGET_LIFETIME = 600
+MAX_PROBE_TARGETS = 3
 
 
 def checksum(data):
@@ -72,26 +75,119 @@ def parse_ra(packet, source, destination, hop_limit, include_default=False):
     return routes
 
 
+def no_route_destination(packet, source, destination):
+    """Extract the quoted destination of an ICMPv6 No Route sent to this host."""
+    if len(packet) < 48 or packet[:2] != b"\x01\x00" or packet[8] >> 4 != 6:
+        return None
+    destination = ipaddress.IPv6Address(destination)
+    if destination.is_multicast or packet[16:32] != destination.packed:
+        return None
+    pseudo = ipaddress.IPv6Address(source).packed + destination.packed
+    pseudo += struct.pack("!I3xB", len(packet), 58)
+    if checksum(pseudo + packet):
+        return None
+    target = ipaddress.IPv6Address(packet[32:48])
+    if target.is_multicast or target.is_link_local or target.is_unspecified:
+        return None
+    return target
+
+
 class RouteState:
     def __init__(self):
         self.entries = {}
+        self.forwarding_retry_at = {}
+        self.forwarding_failed_target = {}
+        self.probe_targets = {}
 
     def update(self, router, routes, now):
         for prefix, preference, lifetime in routes:
             key = (str(prefix), router)
             if lifetime == 0:
                 self.entries.pop(key, None)
+                self.forwarding_retry_at.pop(key, None)
+                self.forwarding_failed_target.pop(key, None)
             else:
                 expiry = math.inf if lifetime == 0xffffffff else now + lifetime
                 self.entries[key] = (preference, expiry)
 
+    def forwarding_error(self, source, target, now, installed):
+        # Match the reporter against active routes. ESP BRs may use a LAN ULA
+        # with the same interface ID as their link-local gateway address.
+        source = ipaddress.IPv6Address(source)
+        matching = [(prefix, preference, router)
+                    for (prefix, preference), routes in installed.items()
+                    if ipaddress.IPv6Network(prefix).prefixlen and target in ipaddress.IPv6Network(prefix)
+                    for router, _ in routes if self.entries.get((prefix, router), (0, 0))[1] > now]
+        if not matching:
+            return
+        prefix = max(matching, key=lambda row: ipaddress.IPv6Network(row[0]).prefixlen)[0]
+        new_target = self.learn_probe_target(prefix, target, now)
+        preference = min((p for n, p, _ in matching if n == prefix), key=PREFERENCE_RANK.get)
+        gateways = {r for n, p, r in matching if n == prefix and p == preference}
+        if source.is_link_local:
+            reporters = gateways & {str(source)}
+        else:
+            reporters = {r for r in gateways
+                         if ipaddress.IPv6Address(r).packed[8:] == source.packed[8:]}
+        if len(reporters) == 1:
+            self.reject_nexthop(prefix, reporters.pop(), target, now)
+        return new_target
+
+    def learn_probe_target(self, prefix, target, now):
+        targets = self.probe_targets.setdefault(prefix, {})
+        new_target = target not in targets
+        targets.pop(target, None)
+        targets[target] = now + PROBE_TARGET_LIFETIME
+        if len(targets) > MAX_PROBE_TARGETS:
+            del targets[next(iter(targets))]
+        return new_target
+
+    def reject_nexthop(self, prefix, router, target, now):
+        key = (prefix, router)
+        if self.entries.get(key, (0, 0))[1] <= now:
+            return
+        previous = self.forwarding_retry_at.get(key, 0)
+        self.forwarding_retry_at[key] = now + FORWARDING_RETRY_DELAY
+        self.forwarding_failed_target[key] = target
+        if previous <= now:
+            LOG.warning("No route to %s via %s; avoiding this nexthop for %s when another is available",
+                        target, router, prefix)
+
+    def restore_nexthop(self, prefix, router, target):
+        key = (prefix, router)
+        if self.forwarding_failed_target.get(key) == target:
+            self.forwarding_failed_target.pop(key)
+            self.forwarding_retry_at.pop(key, None)
+            LOG.info("Forwarding probe succeeded; restored %s via %s", prefix, router)
+
     def selected(self, now, failed=()):
         """Group all usable advertisements; failed neighbors remain learned."""
         self.entries = {k: v for k, v in self.entries.items() if v[1] > now}
+        advertised = {prefix for prefix, _ in self.entries}
+        for prefix, targets in list(self.probe_targets.items()):
+            recent = {target: expiry for target, expiry in targets.items() if expiry > now}
+            if prefix in advertised and recent:
+                self.probe_targets[prefix] = recent
+            else:
+                del self.probe_targets[prefix]
+        self.forwarding_retry_at = {k: t for k, t in self.forwarding_retry_at.items()
+                                    if k in self.entries and t > now}
+        self.forwarding_failed_target = {k: v for k, v in self.forwarding_failed_target.items()
+                                         if k in self.forwarding_retry_at}
         groups = {}
+        fallback = {}
+        for prefix, router in self.entries:
+            if router not in failed:
+                score = ((prefix, router) in self.forwarding_retry_at,
+                         PREFERENCE_RANK[self.entries[(prefix, router)][0]], router)
+                if prefix not in fallback or score < fallback[prefix]:
+                    fallback[prefix] = score
         usable = [ipaddress.IPv6Network(prefix)
                   for prefix, router in self.entries if router not in failed]
         for (prefix, router), (preference, expiry) in self.entries.items():
+            if ((prefix, router) in self.forwarding_retry_at and prefix in fallback
+                    and fallback[prefix][2] != router):
+                continue
             # A usable covering route permits fallback even to a shorter prefix.
             # If no alternative is known, retain failed routes so traffic can
             # trigger kernel NUD rather than creating a permanent dead end.
@@ -331,6 +427,97 @@ def allowed_prefix(prefix, args):
             and any(prefix.subnet_of(network) for network in args.prefix))
 
 
+class ForwardingProbe:
+    def __init__(self, args):
+        self.args = args
+        # Sending via the gateway's Ethernet address pins the outgoing hop
+        # without modifying the kernel routes used by Home Assistant.
+        self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM)
+        self.socket.setblocking(False)
+        self.pending = {}
+        self.reachable = set()
+        self.unreachable = {}
+
+    def send(self, state, writer, icmp, index, now):
+        neighbors = {}
+        for line in writer.command(["neigh", "show", "dev", self.args.interface]).splitlines():
+            fields = line.split()
+            if "lladdr" in fields and "FAILED" not in fields:
+                neighbors[str(ipaddress.IPv6Address(fields[0]))] = bytes.fromhex(
+                    fields[fields.index("lladdr") + 1].replace(":", ""))
+        self.pending.clear()
+        self.reachable.clear()
+        self.unreachable.clear()
+        candidates = [(prefix, router, target)
+                      for (prefix, router), (_, expiry) in state.entries.items()
+                      if expiry > now for target in state.probe_targets.get(prefix, ())]
+        sources = {}
+        for target in {target for _, _, target in candidates}:
+            try:
+                fields = writer.command(["route", "get", str(target), "oif", self.args.interface]).split()
+                source = ipaddress.IPv6Address(fields[fields.index("src") + 1])
+            except (RuntimeError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
+                LOG.debug("Probe source for %s: %s", target, error)
+                continue
+            if not source.is_link_local and not source.is_unspecified:
+                sources[target] = source
+        resolving = set()
+        for prefix, router, target in candidates:
+            source = sources.get(target)
+            if source is None:
+                continue
+            try:
+                mac = neighbors.get(router)
+                if not mac or len(mac) != 6:
+                    # Let normal NUD learn this gateway for the next cycle.
+                    if router not in resolving:
+                        resolving.add(router)
+                        icmp.sendto(b"\x80" + bytes(7), (router, 0, 0, index))
+                    continue
+                token = os.urandom(4)
+                while token in self.pending:
+                    token = os.urandom(4)
+                payload = b"\x80\0\0\0" + token + b"thread-rio"
+                pseudo = source.packed + target.packed + struct.pack("!I3xB", len(payload), 58)
+                payload = payload[:2] + struct.pack("!H", checksum(pseudo + payload)) + payload[4:]
+                packet = struct.pack("!IHBB", 6 << 28, len(payload), 58, 64)
+                packet += source.packed + target.packed + payload
+                self.socket.sendto(packet, (self.args.interface, 0x86dd, 0, 0, mac))
+                self.pending[token] = (source, target, prefix, router)
+            except OSError as error:
+                LOG.debug("Forwarding probe to %s via %s: %s", target, router, error)
+
+    def receive(self, packet, source, destination, state, now):
+        if packet[:2] == b"\x81\0" and packet[8:] == b"thread-rio":
+            token = packet[4:8]
+            probe = self.pending.get(token)
+            if probe and str(probe[0]) == destination and str(probe[1]) == source:
+                del self.pending[token]
+                _, target, prefix, router = probe
+                state.restore_nexthop(prefix, router, target)
+                self.reachable.add((prefix, target))
+                # A response from another BR proves the target itself is up.
+                for failed_router in self.unreachable.pop((prefix, target), ()):
+                    state.reject_nexthop(prefix, failed_router, target, now)
+            return True
+        if len(packet) < 56 or packet[14] != 58 or packet[48:50] != b"\x80\0":
+            return False
+        token = packet[52:56]
+        probe = self.pending.get(token)
+        if not probe or packet[16:48] != probe[0].packed + probe[1].packed:
+            return False
+        if no_route_destination(packet, source, destination) != probe[1]:
+            return False
+        del self.pending[token]
+        _, target, prefix, router = probe
+        key = (prefix, target)
+        if key in self.reachable:
+            state.reject_nexthop(prefix, router, target, now)
+        else:
+            self.unreachable.setdefault(key, set()).add(router)
+        return True
+
+
 def open_socket(interface):
     index = socket.if_nametoindex(interface)
     sock = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)
@@ -340,9 +527,10 @@ def open_socket(interface):
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, index)
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_UNICAST_HOPS, 255)
-    # Linux ICMP6_FILTER: receive RA only; the kernel verifies ICMPv6 as well.
+    # Linux ICMP6_FILTER: receive RA and Destination Unreachable.
     mask = [0xffffffff] * 8
-    mask[134 >> 5] &= ~(1 << (134 & 31))
+    for kind in (1, 129, 134):
+        mask[kind >> 5] &= ~(1 << (kind & 31))
     sock.setsockopt(socket.IPPROTO_ICMPV6, 1, struct.pack("=8I", *mask))
     sock.settimeout(1)
     return sock, index
@@ -362,6 +550,12 @@ def run(args):
             LOG.info("Another learner already runs on %s", args.interface)
             return
     sock, index = open_socket(args.interface)
+    probe = None
+    if args.apply:
+        try:
+            probe = ForwardingProbe(args)
+        except OSError as error:
+            LOG.warning("Cannot start active forwarding probes; using passive ICMPv6 only: %s", error)
     writer = RouteWriter(args)
     state = RouteState()
     stop = [False]
@@ -383,6 +577,7 @@ def run(args):
     next_rs = time.monotonic() + random.uniform(0, 1)
     solicitations = 0
     next_neighbors = 0
+    next_probe = 0
     failed = set()
     try:
         while not stop[0]:
@@ -406,29 +601,38 @@ def run(args):
                     elif level == socket.IPPROTO_IPV6 and kind == socket.IPV6_HOPLIMIT:
                         hop_limit = struct.unpack("=i", data)[0]
                 if flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC) or received_index != index or destination is None:
-                    raise ValueError("truncated RA or missing/wrong receive interface")
-                if args.router and source not in args.router:
-                    raise ValueError("RA source not allowed")
-                routes = parse_ra(packet, source, destination, hop_limit, args.allow_default_route)
-                allowed = []
-                for prefix, preference, lifetime in routes:
-                    if allowed_prefix(prefix, args):
-                        allowed.append((prefix, preference, lifetime))
-                        LOG.info("RA %s: %s preference=%s lifetime=%s", source, prefix, preference, lifetime)
-                state.update(source, allowed, time.monotonic())
-                if args.apply and source in failed and any(
-                        router == source for _, router in state.entries):
-                    try:
-                        if writer.relearn_failed_neighbor(source, packet):
-                            failed.discard(source)
-                    except (RuntimeError, subprocess.TimeoutExpired) as error:
-                        LOG.warning("Relearn neighbor %s: %s", source, error)
-                if journal:
-                    journal.save()
+                    raise ValueError("truncated ICMPv6 or missing/wrong receive interface")
+                if probe and probe.receive(packet, source, destination, state, time.monotonic()):
+                    pass
+                elif packet[:1] == b"\x01":
+                    if args.apply:
+                        target = no_route_destination(packet, source, destination)
+                        if target is not None:
+                            if state.forwarding_error(source, target, time.monotonic(), writer.installed):
+                                next_probe = 0
+                elif packet[:1] == b"\x86":
+                    if args.router and source not in args.router:
+                        raise ValueError("RA source not allowed")
+                    routes = parse_ra(packet, source, destination, hop_limit, args.allow_default_route)
+                    allowed = []
+                    for prefix, preference, lifetime in routes:
+                        if allowed_prefix(prefix, args):
+                            allowed.append((prefix, preference, lifetime))
+                            LOG.info("RA %s: %s preference=%s lifetime=%s", source, prefix, preference, lifetime)
+                    state.update(source, allowed, time.monotonic())
+                    if args.apply and source in failed and any(
+                            router == source for _, router in state.entries):
+                        try:
+                            if writer.relearn_failed_neighbor(source, packet):
+                                failed.discard(source)
+                        except (RuntimeError, subprocess.TimeoutExpired) as error:
+                            LOG.warning("Relearn neighbor %s: %s", source, error)
+                    if journal:
+                        journal.save()
             except socket.timeout:
                 pass
             except ValueError as error:
-                LOG.debug("Ignored RA: %s", error)
+                LOG.debug("Ignored ICMPv6: %s", error)
             now = time.monotonic()
             if now >= next_neighbors:
                 try:
@@ -442,7 +646,15 @@ def run(args):
                     writer.sync(desired, now, journal.save)
                 except (RuntimeError, subprocess.TimeoutExpired) as error:
                     LOG.error("Read routes: %s", error)
+            if probe and state.probe_targets and now >= next_probe:
+                try:
+                    probe.send(state, writer, sock, index, now)
+                except (RuntimeError, OSError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
+                    LOG.warning("Forwarding probes: %s", error)
+                next_probe = time.monotonic() + args.probe_interval
     finally:
+        if probe:
+            probe.socket.close()
         sock.close()
         if args.apply:
             try:
@@ -469,6 +681,8 @@ def main():
     parser.add_argument("--state-file", help="Ownership/recovery journal (default: /run/thread-rio-INTERFACE-TABLE.json)")
     parser.add_argument("--neighbor-interval", type=float, default=5,
                         help="Seconds between reads of kernel NUD state (default: 5)")
+    parser.add_argument("--probe-interval", type=float, default=15,
+                        help="Seconds between probe rounds for destinations learned from No Route (default: 15)")
     parser.add_argument("--rs-interval", type=float, default=0,
                         help="Optional recurring RS interval after initial 3 solicitations (default: disabled)")
     parser.add_argument("--ip", default=shutil.which("ip") or "/sbin/ip")
@@ -479,6 +693,8 @@ def main():
         parser.error("--metric must be between 1 and 4294967293")
     if not math.isfinite(args.neighbor_interval) or args.neighbor_interval <= 0:
         parser.error("--neighbor-interval must be positive and finite")
+    if not math.isfinite(args.probe_interval) or args.probe_interval <= 0:
+        parser.error("--probe-interval must be positive and finite")
     if not math.isfinite(args.rs_interval) or (args.rs_interval != 0 and args.rs_interval < 4):
         parser.error("--rs-interval must be 0 or at least 4 seconds")
     try:
