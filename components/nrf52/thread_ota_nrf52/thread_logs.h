@@ -4,7 +4,7 @@
 
 namespace esphome::thread_ota_nrf52 {
 
-// Used only when swd_rtt_nrf52 is absent; its existing bridge already feeds printk.
+// Used only when zephyr_board_function is absent or RTT logging is disabled.
 void install_log_bridge(logger::Logger *log);
 
 }  // namespace esphome::thread_ota_nrf52

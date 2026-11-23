@@ -80,9 +80,13 @@ void ThreadProxyClient::loop() {
   // Busy batches/normal sleep are not connection loss. Fire ready once initial
   // schema transfer has finished; disconnect only when the selected BR is lost.
   if(this->proxy_was_ready_ && !this->udp_.ready()) {
-    this->proxy_was_ready_=false; this->proxy_disconnect_trigger_.trigger();
+    this->proxy_was_ready_=false;
+    this->proxy_disconnect_callbacks_.call();
+    this->proxy_disconnect_trigger_.trigger();
   } else if(!this->proxy_was_ready_ && this->udp_.ready() && this->udp_.schema_confirmed()) {
-    this->proxy_was_ready_=true; this->proxy_ready_trigger_.trigger();
+    this->proxy_was_ready_=true;
+    this->proxy_ready_callbacks_.call();
+    this->proxy_ready_trigger_.trigger();
   }
 }
 

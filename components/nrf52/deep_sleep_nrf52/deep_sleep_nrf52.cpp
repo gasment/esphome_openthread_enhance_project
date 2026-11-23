@@ -231,6 +231,7 @@ void DeepSleepComponent::abort_(AbortReason reason) {
   if (!peripheral_mgr_.resume()) this->mark_failed();
   for (auto *trigger : sleep_triggers_) trigger->stop_action();
   schedule_();
+  for (auto &callback : abort_callbacks_) callback(reason);
   for (auto *trigger : abort_triggers_) trigger->trigger(reason);
 }
 
@@ -371,6 +372,7 @@ void DeepSleepComponent::disarm_pins_(WakePin *keep) {
 void DeepSleepComponent::sleep_() {
   atomic_clear(&wake_flags_);
   atomic_set(&wake_pin_, -1);
+  for (auto &callback : sleep_callbacks_) callback();
   phase_ = Phase::SLEEPING;
   if (!peripheral_mgr_.suspend()) {
     ESP_LOGW(TAG, "Peripheral suspend failed; restoring peripherals and cancelling sleep");
@@ -431,6 +433,7 @@ void DeepSleepComponent::sleep_() {
   irq_unlock(key);
   if (!peripheral_mgr_.resume()) this->mark_failed();
   schedule_();
+  for (auto &callback : wake_callbacks_) callback(cause, pin);
   ESP_LOGD(TAG, "Wake cause=%u pin=%" PRId32, unsigned(cause), pin);
   for (auto *trigger : wake_triggers_) trigger->trigger(cause, pin);
 #ifdef USE_DEEP_SLEEP_NRF52_VBUS

@@ -68,6 +68,15 @@ class DeepSleepComponent : public Component {
     pin_event_triggers_.push_back({pin, trigger});
   }
   void add_abort_trigger(Trigger<AbortReason> *trigger) { abort_triggers_.push_back(trigger); }
+  void add_sleep_callback(std::function<void()> callback) {
+    sleep_callbacks_.push_back(std::move(callback));
+  }
+  void add_wake_callback(std::function<void(WakeupCause, int32_t)> callback) {
+    wake_callbacks_.push_back(std::move(callback));
+  }
+  void add_abort_callback(std::function<void(AbortReason)> callback) {
+    abort_callbacks_.push_back(std::move(callback));
+  }
 
  protected:
   struct PinEdge {
@@ -142,6 +151,9 @@ class DeepSleepComponent : public Component {
   PeripheralManager peripheral_mgr_;
   std::vector<Trigger<> *> sleep_triggers_;
   std::vector<Trigger<WakeupCause, int32_t> *> wake_triggers_;
+  std::vector<std::function<void()>> sleep_callbacks_;
+  std::vector<std::function<void(WakeupCause, int32_t)>> wake_callbacks_;
+  std::vector<std::function<void(AbortReason)>> abort_callbacks_;
   struct PinAutomation {
     uint8_t pin;
     PinEventTrigger *trigger;

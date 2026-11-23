@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/core/defines.h"
+#include "esphome/core/helpers.h"
 #include "api_buffer.h"
 #include "udp_transport.h"
 // Must precede clients_ so APIConnection is complete for default_delete (libc++).
@@ -48,6 +49,21 @@ class ThreadProxyClient final : public Component
   Trigger<> *get_disconnect_trigger() { return &proxy_disconnect_trigger_; }
   Trigger<> proxy_ready_trigger_, proxy_disconnect_trigger_;
   bool proxy_was_ready_{false};
+  bool is_link_ready() const { return this->udp_.ready() && this->udp_.schema_confirmed(); }
+  bool has_pending_operations() const {
+    return static_cast<bool>(this->sed_batch_done_) || this->sed_auto_pending() || this->udp_.pending();
+  }
+  void add_on_ready_callback(std::function<void()> callback) {
+    this->proxy_ready_callbacks_.add(std::move(callback));
+  }
+  void add_on_disconnect_callback(std::function<void()> callback) {
+    this->proxy_disconnect_callbacks_.add(std::move(callback));
+  }
+  void add_on_activity_callback(std::function<void(bool, bool)> callback) {
+    this->proxy_activity_callbacks_.add(std::move(callback));
+  }
+  void sed_activity_started() { this->proxy_activity_callbacks_.call(true, false); }
+  void sed_activity_finished(bool success) { this->proxy_activity_callbacks_.call(false, success); }
   void set_discovery_timeout(uint32_t ms) { discovery_timeout_=ms; }
   uint32_t discovery_timeout() const { return discovery_timeout_; }
   uint32_t discovery_timeout_{3000};
@@ -335,6 +351,8 @@ class ThreadProxyClient final : public Component
   uint32_t sed_auto_phase_started_{0};
   Trigger<std::string, uint32_t, bool> sed_auto_ack_trigger_;
   Trigger<std::string, std::string> sed_auto_error_trigger_;
+  CallbackManager<void()> proxy_ready_callbacks_, proxy_disconnect_callbacks_;
+  CallbackManager<void(bool, bool)> proxy_activity_callbacks_;
   bool sed_manual_send_{false};
   APIConnection *sed_batch_client_{nullptr};
   const void *sed_batch_owner_{nullptr};

@@ -48,11 +48,16 @@ class ThreadP2PTransporter : public Component {
     targets_.push_back({id, address, {}, port});
   }
   bool is_ready() const { return !shutdown_ && !is_failed() && ready_ && ot_ != nullptr && ot_->is_connected(); }
+  bool is_busy() const { return !this->pending_.empty(); }
+  size_t pending_count() const { return this->pending_.size(); }
   bool send(const std::string &target, bool direct_address, std::optional<uint16_t> port_override, uint8_t flag,
             const Payload &payload, uint32_t ack_timeout = 0, uint8_t resend = 0, SendCompletion completion = {});
   void add_on_receive_callback(std::function<void(uint8_t, Payload)> fn) { receive_callbacks_.add(std::move(fn)); }
   void add_on_send_success_callback(std::function<void(uint8_t, uint32_t)> fn) { success_callbacks_.add(std::move(fn)); }
   void add_on_send_fail_callback(std::function<void(uint8_t, uint32_t)> fn) { fail_callbacks_.add(std::move(fn)); }
+  void add_on_activity_callback(std::function<void(bool, bool)> fn) {
+    activity_callbacks_.add(std::move(fn));
+  }
 
  protected:
   static constexpr size_t MAX_DATAGRAM = 1232, HEADER_SIZE = 24, MAX_PAYLOAD = MAX_DATAGRAM - HEADER_SIZE;
@@ -105,6 +110,7 @@ class ThreadP2PTransporter : public Component {
   std::atomic<uint32_t> dropped_{0};
   CallbackManager<void(uint8_t, Payload)> receive_callbacks_;
   CallbackManager<void(uint8_t, uint32_t)> success_callbacks_, fail_callbacks_;
+  CallbackManager<void(bool, bool)> activity_callbacks_;
 };
 
 }  // namespace esphome::thread_p2p_transporter_nrf52

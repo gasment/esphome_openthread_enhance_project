@@ -337,8 +337,15 @@ uint16_t APIConnection::fill_and_encode_entity_info(EntityBase *entity, InfoResp
   // Set common fields that are shared by all entity types
   msg.key = entity->get_object_id_hash();
 
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  char entity_name[ENTITY_NAME_BUF_SIZE];
+#endif
   if (entity->has_own_name()) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+    msg.name = entity->get_name_to(entity_name);
+#else
     msg.name = entity->get_name();
+#endif
   }
 
   // Set common EntityBase properties
@@ -508,6 +515,9 @@ uint16_t APIConnection::try_send_light_info(EntityBase *entity, APIConnection *c
     msg.min_mireds = traits.get_min_mireds();
     msg.max_mireds = traits.get_max_mireds();
   }
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  light::LightEffectNames effects_list(light->get_effects());
+#else
   FixedVector<const char *> effects_list;
   if (light->supports_effects()) {
     auto &light_effects = light->get_effects();
@@ -518,6 +528,7 @@ uint16_t APIConnection::try_send_light_info(EntityBase *entity, APIConnection *c
       effects_list.push_back(effect->get_name().c_str());
     }
   }
+#endif
   msg.effects = &effects_list;
   return fill_and_encode_entity_info(light, msg, conn, remaining_size);
 }
