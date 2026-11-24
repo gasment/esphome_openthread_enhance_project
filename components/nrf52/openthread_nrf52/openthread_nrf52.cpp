@@ -9,6 +9,9 @@
 #include <openthread/logging.h>
 #include <openthread/netdata.h>
 #include <openthread/tasklet.h>
+#if defined(USE_OPENTHREAD_NRF52_PARENT_SEARCH) && !defined(OT_ESPHOME_POLL_PARENT_SEARCH_PATCH)
+#error "The build-local OpenThread module for Data Poll parent search is missing."
+#endif
 
 #include <cstring>
 #include <algorithm>
@@ -95,6 +98,9 @@ void OpenThreadComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Open Thread:");
   ESP_LOGCONFIG(TAG, "  Independent nRF52/Zephyr fork: 1.0.0 (ESPHome 2026.9.1 baseline)");
   ESP_LOGCONFIG(TAG, "  Stack Log Level: %s", USE_OPENTHREAD_NRF52_LOG_LEVEL);
+#ifdef USE_OPENTHREAD_NRF52_PARENT_SEARCH
+  ESP_LOGCONFIG(TAG, "  Parent Search: triggered by Data Poll");
+#endif
 #if CONFIG_OPENTHREAD_FTD
   ESP_LOGCONFIG(TAG, "  Device Type: FTD");
 #elif CONFIG_OPENTHREAD_MTD

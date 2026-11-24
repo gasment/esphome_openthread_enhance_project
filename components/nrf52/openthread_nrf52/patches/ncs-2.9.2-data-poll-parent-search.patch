@@ -1,0 +1,223 @@
+diff --git a/include/openthread/thread.h b/include/openthread/thread.h
+--- a/include/openthread/thread.h
++++ b/include/openthread/thread.h
+@@ -34,6 +34,8 @@
+ 
+ #ifndef OPENTHREAD_THREAD_H_
+ #define OPENTHREAD_THREAD_H_
++
++#define OT_ESPHOME_POLL_PARENT_SEARCH_PATCH 1
+ 
+ #include <openthread/dataset.h>
+ #include <openthread/link.h>
+diff --git a/src/core/mac/mac.cpp b/src/core/mac/mac.cpp
+--- a/src/core/mac/mac.cpp
++++ b/src/core/mac/mac.cpp
+@@ -1248,8 +1248,28 @@
+     return;
+ }
+ 
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++void Mac::EvaluatePollParentSearch(void)
++{
++    auto &mle = Get<Mle::Mle>();
++
++    if (mPollParentAck && (mPollParentRloc == mle.GetParent().GetRloc16()))
++    {
++        mle.SearchForBetterParentAfterPoll(mPollParentRss);
++    }
++
++    mPollParentAck = false;
++}
++#endif
++
+ void Mac::HandleTransmitDone(TxFrame &aFrame, RxFrame *aAckFrame, Error aError)
+ {
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++    if (mOperation == kOperationTransmitPoll)
++    {
++        mPollParentAck = false;
++    }
++#endif
+     bool ackRequested = aFrame.GetAckRequest();
+ 
+ #if OPENTHREAD_CONFIG_RADIO_LINK_IEEE_802_15_4_ENABLE
+@@ -1308,6 +1328,21 @@
+             if ((aError == kErrorNone) && (neighbor != nullptr))
+             {
+                 UpdateNeighborLinkInfo(*neighbor, *aAckFrame);
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++                if (mOperation == kOperationTransmitPoll && Get<Mle::Mle>().IsChild() &&
++                    neighbor == &Get<Mle::Mle>().GetParent())
++                {
++                    mPollParentAck = true;
++                    mPollParentRloc = Get<Mle::Mle>().GetParent().GetRloc16();
++                    mPollParentRss = aAckFrame->GetRssi();
++#if OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_AVERAGE
++                    if (mPollParentRss != Radio::kInvalidRssi)
++                    {
++                        mPollParentRss = neighbor->GetLinkInfo().GetAverageRss();
++                    }
++#endif
++                }
++#endif
+ 
+ #if OPENTHREAD_CONFIG_MLE_LINK_METRICS_INITIATOR_ENABLE
+                 ProcessEnhAckProbing(*aAckFrame, *neighbor);
+@@ -1408,6 +1443,12 @@
+         FinishOperation();
+         Get<DataPollSender>().HandlePollSent(aFrame, aError);
+         PerformNextOperation();
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++        if (mPollParentAck && !aAckFrame->GetFramePending())
++        {
++            EvaluatePollParentSearch();
++        }
++#endif
+         break;
+ 
+     case kOperationTransmitDataDirect:
+@@ -1489,6 +1530,9 @@
+         FinishOperation();
+         Get<DataPollSender>().HandlePollTimeout();
+         PerformNextOperation();
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++        EvaluatePollParentSearch();
++#endif
+         break;
+ 
+     case kOperationIdle:
+@@ -1948,6 +1992,19 @@
+         {
+             mTimer.Stop();
+ 
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++            if (mPollParentAck && neighbor == &Get<Mle::Mle>().GetParent() &&
++                mPollParentRloc == Get<Mle::Mle>().GetParent().GetRloc16() &&
++                aFrame->GetRssi() != Radio::kInvalidRssi)
++            {
++#if OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_AVERAGE
++                mPollParentRss = neighbor->GetLinkInfo().GetAverageRss();
++#else
++                mPollParentRss = aFrame->GetRssi();
++#endif
++            }
++#endif
++
+ #if OPENTHREAD_CONFIG_MAC_STAY_AWAKE_BETWEEN_FRAGMENTS
+             if (!mRxOnWhenIdle && !mPromiscuous && aFrame->GetFramePending())
+             {
+@@ -1957,6 +2014,9 @@
+ #endif
+             FinishOperation();
+             PerformNextOperation();
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++            EvaluatePollParentSearch();
++#endif
+         }
+ 
+         SuccessOrExit(error);
+diff --git a/src/core/mac/mac.hpp b/src/core/mac/mac.hpp
+--- a/src/core/mac/mac.hpp
++++ b/src/core/mac/mac.hpp
+@@ -857,6 +857,12 @@
+     bool mDelayingSleep : 1;
+ #endif
+     Operation   mOperation;
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++    void EvaluatePollParentSearch(void);
++    bool     mPollParentAck{false};
++    uint16_t mPollParentRloc{0};
++    int8_t   mPollParentRss{OT_RADIO_RSSI_INVALID};
++#endif
+     uint16_t    mPendingOperations;
+     uint8_t     mBeaconSequence;
+     uint8_t     mDataSequence;
+diff --git a/src/core/thread/mle.cpp b/src/core/thread/mle.cpp
+--- a/src/core/thread/mle.cpp
++++ b/src/core/thread/mle.cpp
+@@ -572,9 +572,32 @@
+     return error;
+ }
+ 
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++void Mle::SearchForBetterParentAfterPoll(int8_t aRss)
++{
++    if (!IsChild() || IsRxOnWhenIdle() || IsAttaching() || aRss == Radio::kInvalidRssi)
++    {
++        return;
++    }
++
++#ifdef OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_THRESHOLD
++    if (aRss >= OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_THRESHOLD)
++    {
++        return;
++    }
++#endif
++
++    Attach(kBetterParent);
++    mPollParentSearchRss = aRss;
++}
++#endif
++
+ void Mle::Attach(AttachMode aMode)
+ {
+     VerifyOrExit(!IsDisabled() && !IsAttaching());
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++    mPollParentSearchRss = Radio::kInvalidRssi;
++#endif
+ 
+     if (!IsDetached())
+     {
+@@ -1386,7 +1409,13 @@
+         // new parent candidate is compared with the current parent
+         // and that it is indeed preferred over the current one.
+ 
+-        VerifyOrExit(mReceivedResponseFromParent || (mAttachMode == kBetterPartition));
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++        // A poll search has a fresh measurement of the current parent.
++        if (mPollParentSearchRss == Radio::kInvalidRssi)
++#endif
++        {
++            VerifyOrExit(mReceivedResponseFromParent || (mAttachMode == kBetterPartition));
++        }
+     }
+ 
+     hasAcceptableParent = true;
+@@ -3200,6 +3229,13 @@
+                                                       Get<MleRouter>().IsSingleton(), mLeaderData) > 0);
+             break;
+         }
++    }
++#endif
++
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++    if (IsChild() && (mAttachMode == kBetterParent) && (mPollParentSearchRss != Radio::kInvalidRssi))
++    {
++        VerifyOrExit(extAddress != mParent.GetExtAddress() && rss != Radio::kInvalidRssi && rss > mPollParentSearchRss);
+     }
+ #endif
+ 
+diff --git a/src/core/thread/mle.hpp b/src/core/thread/mle.hpp
+--- a/src/core/thread/mle.hpp
++++ b/src/core/thread/mle.hpp
+@@ -471,6 +471,9 @@
+      *
+      */
+     Error SearchForBetterParent(void);
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++    void SearchForBetterParentAfterPoll(int8_t aRss);
++#endif
+ 
+     /**
+      * Indicates whether or not an IPv6 address is an RLOC.
+@@ -1436,6 +1439,9 @@
+     AttachState             mAttachState;
+     ReattachState           mReattachState;
+     AttachMode              mAttachMode;
++#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
++    int8_t                  mPollParentSearchRss{OT_RADIO_RSSI_INVALID};
++#endif
+     DataRequestState        mDataRequestState;
+     AddressRegistrationMode mAddressRegistrationMode;
+     ChildUpdateRequestState mChildUpdateRequestState;

@@ -128,6 +128,29 @@ OTA 维护窗口应设为 `0s` 切换 MED，并确保 MCU 主循环继续运行�
 SED 周期。若切换命令来自网络，在设备仍为长周期 SED 时也需等待下行被轮询取回。
 该模式切换只解决 Thread 接收行为，不补齐 Zephyr 的 ESPHome OTA 后端。
 
+### 随 Data Poll 主动搜父
+
+```yaml
+openthread_nrf52:
+  device_type: MTD
+  poll_period: 25min
+  parent_search:
+    rssi_source: last
+```
+
+该选项适用于已附着的 SED。OpenThread 在每次 Data Poll 收到当前父节点的有效 ACK 或
+下行帧后，检查本轮更新的 RSSI。没有有效样本就跳过，已有搜父或附着过程仍在执行时也跳过。
+`rssi_source` 默认 `last`，也可设为 `average`，使用本轮采样更新后的平均值。
+可选的 `rssi_threshold` 只在配置时生效，当前 RSSI 严格低于它才发起搜索。
+搜索期间维持当前连接，仅接受响应 RSSI 严格高于本轮基准的候选，并在附着成功后切换。
+
+检查跟随 Data Poll，在 Zephyr OpenThread 线程执行。ESPHome 应用继续 System ON 待机。
+搜索需要额外的无线接收时间。迁移旧配置时删除 `check_interval` 和 `min_search_interval`。
+
+通过 `external_components` 加载后即可使用。启用此配置的设备在构建时会自动复制
+NCS 的 OpenThread 源码，并在设备构建目录应用[组件补丁](patches/ncs-2.9.2-data-poll-parent-search.patch)。
+此功能使用 nRF52 的 `sdk-nrf` 工具链，基线为 NCS 2.9.2。共享 SDK 和 ESPHome 安装均无需手动修改。
+
 ### Child Supervision
 
 MTD 自动启用并适配监督参数，也可显式配置：
