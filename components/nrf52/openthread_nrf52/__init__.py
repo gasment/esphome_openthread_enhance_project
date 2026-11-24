@@ -16,7 +16,7 @@ from .const import (
     CONF_PAN_ID, CONF_POLL_PERIOD, CONF_PSKC, CONF_SRP_ID, CONF_TLV,
 )
 from .dataset import dataset_tlv, fixed_hex, mesh_local_prefix, network_name, validate_tlv
-from . import joiner_config
+from . import joiner_config, poll_parent_search_build
 
 AUTO_LOAD = ["network", "mdns"]
 DEPENDENCIES = ["nrf52"]
@@ -57,6 +57,16 @@ CHILD_SUPERVISION_SCHEMA = cv.Schema({
 })
 
 
+PARENT_SEARCH_SCHEMA = cv.Schema({
+    cv.Optional("rssi_source", default="last"): cv.one_of("last", "average", lower=True),
+    cv.Optional("rssi_threshold", default=-75): cv.int_range(min=-128, max=0),
+    cv.Optional("min_poll_period", default="5s"): cv.All(
+        cv.positive_time_period_milliseconds,
+        cv.Range(min=cv.TimePeriod(milliseconds=1), max=cv.TimePeriod(milliseconds=0x7FFFFFFF)),
+    ),
+})
+
+
 def validate_supervision(config):
     supervision = config.get("child_supervision", {})
     interval = supervision.get("interval", cv.TimePeriodSeconds(seconds=129)).total_seconds
@@ -77,11 +87,13 @@ def validate(config):
     if CONF_USE_ADDRESS not in config:
         config[CONF_USE_ADDRESS] = f"{CORE.name}.local"
     if config[CONF_DEVICE_TYPE] != "MTD":
-        for key in (CONF_POLL_PERIOD, CONF_CHILD_TIMEOUT, "child_supervision"):
+        for key in (CONF_POLL_PERIOD, CONF_CHILD_TIMEOUT, "child_supervision", "parent_search"):
             if key in config:
                 raise cv.Invalid(f"{key} is only allowed with device_type: MTD", path=[key])
     else:
         validate_supervision(config)
+    if "parent_search" in config and not CORE.using_toolchain_sdk_nrf:
+        raise cv.Invalid("Data Poll parent_search requires the nRF52 sdk-nrf toolchain", path=["parent_search"])
     return config
 
 
@@ -115,6 +127,7 @@ CONFIG_SCHEMA = cv.All(
         cv.Optional(CONF_POLL_PERIOD): poll_period,
         cv.Optional(CONF_CHILD_TIMEOUT): child_timeout,
         cv.Optional("child_supervision"): CHILD_SUPERVISION_SCHEMA,
+        cv.Optional("parent_search"): PARENT_SEARCH_SCHEMA,
     }).extend(cv.COMPONENT_SCHEMA),
     cv.has_exactly_one_key("thread_network_config", "joiner"),
     cv.require_esphome_version(2026, 9, 1),
@@ -186,9 +199,25 @@ async def to_code(config):
             cg.add(sleep.add_sleep_guard(cg.RawExpression(f"[]() {{ return !{config[CONF_ID]}->is_joiner_active(); }}")))
     zephyr_add_prj_conf("OPENTHREAD_JOINER", "joiner" in config)
     zephyr_add_prj_conf("OPENTHREAD_JOINER_AUTOSTART", False)
+    custom_parameters = []
     if "joiner" in config:
         zephyr_add_prj_conf("MBEDTLS_HEAP_SIZE", 16384)
-        zephyr_add_prj_conf("OPENTHREAD_CUSTOM_PARAMETERS", "OPENTHREAD_CONFIG_JOINER_ADV_EXPERIMENTAL_ENABLE=1")
+        custom_parameters.append("OPENTHREAD_CONFIG_JOINER_ADV_EXPERIMENTAL_ENABLE=1")
+    if "parent_search" in config:
+        poll_parent_search_build.register()
+        search = config["parent_search"]
+        average = search["rssi_source"] == "average"
+        min_poll_ms = search["min_poll_period"].total_milliseconds
+        cg.add_define("USE_OPENTHREAD_NRF52_PARENT_SEARCH")
+        custom_parameters.extend((
+            "OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH=1",
+            f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_AVERAGE={int(average)}",
+            f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_THRESHOLD={search['rssi_threshold']}",
+            f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_MIN_POLL_PERIOD={min_poll_ms}",
+        ))
+        zephyr_add_prj_conf("OPENTHREAD_PARENT_SEARCH", False)
+    if custom_parameters:
+        zephyr_add_prj_conf("OPENTHREAD_CUSTOM_PARAMETERS", " ".join(custom_parameters))
     add_use_address(ot, config[CONF_USE_ADDRESS])
     if config[CONF_DEVICE_TYPE] == "MTD":
         supervision = config.get("child_supervision", {})

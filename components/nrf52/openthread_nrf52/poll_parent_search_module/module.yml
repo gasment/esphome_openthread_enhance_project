@@ -1,0 +1,4 @@
+name: openthread
+build:
+  cmake: esphome
+  kconfig-ext: true
