@@ -60,6 +60,10 @@ CHILD_SUPERVISION_SCHEMA = cv.Schema({
 PARENT_SEARCH_SCHEMA = cv.Schema({
     cv.Optional("rssi_source", default="last"): cv.one_of("last", "average", lower=True),
     cv.Optional("rssi_threshold", default=-75): cv.int_range(min=-128, max=0),
+    cv.Optional("min_poll_period", default="5s"): cv.All(
+        cv.positive_time_period_milliseconds,
+        cv.Range(min=cv.TimePeriod(milliseconds=1), max=cv.TimePeriod(milliseconds=0x7FFFFFFF)),
+    ),
 })
 
 
@@ -203,11 +207,13 @@ async def to_code(config):
         poll_parent_search_build.register()
         search = config["parent_search"]
         average = search["rssi_source"] == "average"
+        min_poll_ms = search["min_poll_period"].total_milliseconds
         cg.add_define("USE_OPENTHREAD_NRF52_PARENT_SEARCH")
         custom_parameters.extend((
             "OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH=1",
             f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_AVERAGE={int(average)}",
             f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_THRESHOLD={search['rssi_threshold']}",
+            f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_MIN_POLL_PERIOD={min_poll_ms}",
         ))
         zephyr_add_prj_conf("OPENTHREAD_PARENT_SEARCH", False)
     if custom_parameters:

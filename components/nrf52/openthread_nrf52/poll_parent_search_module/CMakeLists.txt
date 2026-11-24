@@ -5,6 +5,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${poll_patch}"
   "${CMAKE_CURRENT_LIST_DIR}/prepare.py"
   "${sdk_openthread}/include/openthread/thread.h"
+  "${sdk_openthread}/src/core/api/thread_api.cpp"
+  "${sdk_openthread}/src/core/mac/data_poll_sender.hpp"
   "${sdk_openthread}/src/core/mac/mac.cpp"
   "${sdk_openthread}/src/core/mac/mac.hpp"
   "${sdk_openthread}/src/core/thread/mle.cpp"

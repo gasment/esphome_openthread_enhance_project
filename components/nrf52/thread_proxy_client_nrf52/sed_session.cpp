@@ -97,22 +97,31 @@ void ThreadProxyClient::sed_poll(bool fast) {
   if (!lock) return;
   auto *instance = lock.get_instance();
   if (instance == nullptr) return;
-  if (otThreadGetLinkMode(instance).mRxOnWhenIdle) { this->sed_fast_poll_=false; return; }
-  const uint32_t current=otLinkGetPollPeriod(instance);
-  if (fast) {
-    if (!this->sed_fast_poll_) this->sed_saved_poll_=current;
-    uint32_t interval=this->sed_saved_poll_;
-    if (interval==0 || interval>THREAD_PROXY_CLIENT_NRF52_FAST_POLL_MS) interval=THREAD_PROXY_CLIENT_NRF52_FAST_POLL_MS;
-    if (current!=interval) {
-      if (otLinkSetPollPeriod(instance,interval)!=OT_ERROR_NONE) return;
-      ESP_LOGV("thread_proxy_client_nrf52","Fast poll: %u -> %u ms",static_cast<unsigned>(current),static_cast<unsigned>(interval));
-    }
+#ifdef USE_OPENTHREAD_NRF52_PARENT_SEARCH
+  if (fast) otThreadSetPollParentSearchPaused(instance, true);
+#endif
+  if (otThreadGetLinkMode(instance).mRxOnWhenIdle) {
+    this->sed_fast_poll_ = false;
   } else {
-    if (!this->sed_fast_poll_) return;
-    if (otLinkSetPollPeriod(instance,this->sed_saved_poll_)!=OT_ERROR_NONE) return;
-    ESP_LOGV("thread_proxy_client_nrf52","Restore poll: %u ms",static_cast<unsigned>(this->sed_saved_poll_));
+    const uint32_t current = otLinkGetPollPeriod(instance);
+    if (fast) {
+      if (!this->sed_fast_poll_) this->sed_saved_poll_ = current;
+      uint32_t interval = this->sed_saved_poll_;
+      if (interval == 0 || interval > THREAD_PROXY_CLIENT_NRF52_FAST_POLL_MS)
+        interval = THREAD_PROXY_CLIENT_NRF52_FAST_POLL_MS;
+      if (current != interval) {
+        if (otLinkSetPollPeriod(instance, interval) != OT_ERROR_NONE) return;
+        ESP_LOGV("thread_proxy_client_nrf52", "Fast poll: %u -> %u ms", unsigned(current), unsigned(interval));
+      }
+    } else if (this->sed_fast_poll_) {
+      if (otLinkSetPollPeriod(instance, this->sed_saved_poll_) != OT_ERROR_NONE) return;
+      ESP_LOGV("thread_proxy_client_nrf52", "Restore poll: %u ms", unsigned(this->sed_saved_poll_));
+    }
+    this->sed_fast_poll_ = fast;
   }
-  this->sed_fast_poll_=fast;
+#ifdef USE_OPENTHREAD_NRF52_PARENT_SEARCH
+  if (!fast) otThreadSetPollParentSearchPaused(instance, false);
+#endif
 }
 void ThreadProxyClient::sed_queue_event(EntityBase *entity, StringRef type) {
   if (this->sed_boot_ == 0) this->sed_boot_ = random_uint32();

@@ -375,13 +375,18 @@ void ProxyUdpTransport::receive_() {
     // PROBE source. Commands/schema requests use the stable business endpoint.
     const auto *expected=reinterpret_cast<const sockaddr_in6 *>((kind==3 && !tx_.empty())?&tx_peer_:&peer_);
     const auto *sender=reinterpret_cast<const sockaddr_in6 *>(&from);
-    if(!ready() || sender->sin6_port!=expected->sin6_port ||
-        memcmp(&sender->sin6_addr,&expected->sin6_addr,16)!=0) {
+    if(!ready()) {
+      if(kind==3) ESP_LOGD(TAG,"ACK ignored: BR session is not verified");
+      continue;
+    }
+    if(sender->sin6_port!=expected->sin6_port || memcmp(&sender->sin6_addr,&expected->sin6_addr,16)!=0) {
       if(kind==3) {
-        char wanted[socket::SOCKADDR_STR_LEN];
+        char wanted[socket::SOCKADDR_STR_LEN], actual[socket::SOCKADDR_STR_LEN];
         const auto &target=tx_.empty()?peer_:tx_peer_;
         socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&target),tx_.empty()?peer_len_:tx_peer_len_,wanted);
-        ESP_LOGW(TAG,"ACK rejected: unexpected source; expected=[%s]:%u",wanted,ntohs(expected->sin6_port));
+        socket::format_sockaddr_to(reinterpret_cast<const sockaddr *>(&from),length,actual);
+        ESP_LOGW(TAG,"ACK rejected: unexpected source; received=[%s]:%u expected=[%s]:%u",
+            actual,ntohs(sender->sin6_port),wanted,ntohs(expected->sin6_port));
       }
       continue;
     }

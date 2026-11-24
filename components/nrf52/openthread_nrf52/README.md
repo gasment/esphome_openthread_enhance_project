@@ -137,16 +137,21 @@ openthread_nrf52:
   parent_search:
     rssi_source: last
     rssi_threshold: -75
+    min_poll_period: 5s
 ```
 
 该选项适用于已附着的 SED。Data Poll 取到当前父节点的新 RSSI 后，且本轮下行已收完，
 才检查是否搜父。等待下行超时、本轮仍有待取数据、MLE 正在维护链路或已有搜父时，跳过本次检查。
 `rssi_source` 默认 `last`，也可设为 `average`，使用本轮采样更新后的平均值。
 `rssi_threshold` 默认 `-75` dBm。当前 RSSI 严格低于该阈值才发起搜索。
+`min_poll_period` 默认 `5s`。生效轮询周期或与上次实际轮询的间隔低于此值时，跳过搜父。
+此项只筛选触发搜父的轮询，轮询频率由 OpenThread 原有策略控制。
 切换前须收到当前父节点的 MLE Parent Response。候选需与当前父节点处于同一分区，
 其响应 RSSI 需高于本轮读数和当前父节点的有效响应读数，且通过 OpenThread 原有的父节点选择。
 
 检查跟随 Data Poll，在 Zephyr OpenThread 线程执行。ESPHome 应用继续 System ON 待机。
+`thread_proxy_client_nrf52` 开启快轮询时会暂停发起搜父，并取消尚未发送 Child ID Request 的试探。
+代理恢复常规轮询后，下次符合条件的 Data Poll 可再次触发搜父。
 搜索需要额外的无线接收时间。迁移旧配置时删除 `check_interval` 和 `min_search_interval`。
 
 通过 `external_components` 加载后即可使用。启用此配置的设备在构建时会自动复制
