@@ -59,7 +59,7 @@ CHILD_SUPERVISION_SCHEMA = cv.Schema({
 
 PARENT_SEARCH_SCHEMA = cv.Schema({
     cv.Optional("rssi_source", default="last"): cv.one_of("last", "average", lower=True),
-    cv.Optional("rssi_threshold"): cv.int_range(min=-128, max=0),
+    cv.Optional("rssi_threshold", default=-75): cv.int_range(min=-128, max=0),
 })
 
 
@@ -207,11 +207,8 @@ async def to_code(config):
         custom_parameters.extend((
             "OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH=1",
             f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_AVERAGE={int(average)}",
+            f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_THRESHOLD={search['rssi_threshold']}",
         ))
-        if "rssi_threshold" in search:
-            custom_parameters.append(
-                f"OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH_THRESHOLD={search['rssi_threshold']}"
-            )
         zephyr_add_prj_conf("OPENTHREAD_PARENT_SEARCH", False)
     if custom_parameters:
         zephyr_add_prj_conf("OPENTHREAD_CUSTOM_PARAMETERS", " ".join(custom_parameters))

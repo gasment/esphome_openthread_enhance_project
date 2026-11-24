@@ -82,7 +82,7 @@ diff --git a/src/core/mac/mac.cpp b/src/core/mac/mac.cpp
          Get<DataPollSender>().HandlePollTimeout();
          PerformNextOperation();
 +#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
-+        EvaluatePollParentSearch();
++        mPollParentAck = false;
 +#endif
          break;
  
@@ -107,12 +107,19 @@ diff --git a/src/core/mac/mac.cpp b/src/core/mac/mac.cpp
  #if OPENTHREAD_CONFIG_MAC_STAY_AWAKE_BETWEEN_FRAGMENTS
              if (!mRxOnWhenIdle && !mPromiscuous && aFrame->GetFramePending())
              {
-@@ -1957,6 +2014,9 @@
+@@ -1957,6 +2014,16 @@
  #endif
              FinishOperation();
              PerformNextOperation();
 +#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
-+            EvaluatePollParentSearch();
++            if ((error == kErrorNone) && !aFrame->GetFramePending())
++            {
++                EvaluatePollParentSearch();
++            }
++            else
++            {
++                mPollParentAck = false;
++            }
 +#endif
          }
  
@@ -136,7 +143,7 @@ diff --git a/src/core/mac/mac.hpp b/src/core/mac/mac.hpp
 diff --git a/src/core/thread/mle.cpp b/src/core/thread/mle.cpp
 --- a/src/core/thread/mle.cpp
 +++ b/src/core/thread/mle.cpp
-@@ -572,9 +572,32 @@
+@@ -572,9 +572,37 @@
      return error;
  }
  
@@ -144,6 +151,10 @@ diff --git a/src/core/thread/mle.cpp b/src/core/thread/mle.cpp
 +void Mle::SearchForBetterParentAfterPoll(int8_t aRss)
 +{
 +    if (!IsChild() || IsRxOnWhenIdle() || IsAttaching() || aRss == Radio::kInvalidRssi)
++    {
++        return;
++    }
++    if (mChildUpdateRequestState != kChildUpdateRequestNone || mDataRequestState != kDataRequestNone)
 +    {
 +        return;
 +    }
@@ -157,6 +168,7 @@ diff --git a/src/core/thread/mle.cpp b/src/core/thread/mle.cpp
 +
 +    Attach(kBetterParent);
 +    mPollParentSearchRss = aRss;
++    LogInfo("Data poll parent search: parent 0x%04x RSS %d", mParent.GetRloc16(), aRss);
 +}
 +#endif
 +
@@ -169,35 +181,46 @@ diff --git a/src/core/thread/mle.cpp b/src/core/thread/mle.cpp
  
      if (!IsDetached())
      {
-@@ -1386,7 +1409,13 @@
-         // new parent candidate is compared with the current parent
+@@ -1387,6 +1415,14 @@
          // and that it is indeed preferred over the current one.
  
--        VerifyOrExit(mReceivedResponseFromParent || (mAttachMode == kBetterPartition));
+         VerifyOrExit(mReceivedResponseFromParent || (mAttachMode == kBetterPartition));
 +#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
-+        // A poll search has a fresh measurement of the current parent.
-+        if (mPollParentSearchRss == Radio::kInvalidRssi)
-+#endif
++        if ((mAttachMode == kBetterParent) && (mPollParentSearchRss != Radio::kInvalidRssi) &&
++            (mParentCandidate.GetExtAddress() != mParent.GetExtAddress()))
 +        {
-+            VerifyOrExit(mReceivedResponseFromParent || (mAttachMode == kBetterPartition));
++            const int8_t rss = mParentCandidate.GetLinkInfo().GetLastRss();
++            VerifyOrExit(rss != Radio::kInvalidRssi && rss > mPollParentSearchRss);
 +        }
++#endif
      }
  
      hasAcceptableParent = true;
-@@ -3200,6 +3229,13 @@
+@@ -3199,6 +3235,24 @@
+             VerifyOrExit(MleRouter::ComparePartitions(connectivityTlv.IsSingleton(), leaderData,
                                                        Get<MleRouter>().IsSingleton(), mLeaderData) > 0);
              break;
-         }
++        }
 +    }
 +#endif
 +
 +#if defined(OPENTHREAD_CONFIG_ESPHOME_POLL_PARENT_SEARCH)
 +    if (IsChild() && (mAttachMode == kBetterParent) && (mPollParentSearchRss != Radio::kInvalidRssi))
 +    {
-+        VerifyOrExit(extAddress != mParent.GetExtAddress() && rss != Radio::kInvalidRssi && rss > mPollParentSearchRss);
++        VerifyOrExit(leaderData.GetPartitionId() == mLeaderData.GetPartitionId());
++        if (extAddress == mParent.GetExtAddress())
++        {
++            if (rss != Radio::kInvalidRssi)
++            {
++                mPollParentSearchRss = Max(mPollParentSearchRss, rss);
++            }
++        }
++        else
++        {
++            VerifyOrExit(rss != Radio::kInvalidRssi && rss > mPollParentSearchRss);
+         }
      }
  #endif
- 
 diff --git a/src/core/thread/mle.hpp b/src/core/thread/mle.hpp
 --- a/src/core/thread/mle.hpp
 +++ b/src/core/thread/mle.hpp
