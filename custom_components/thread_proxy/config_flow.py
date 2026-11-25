@@ -14,6 +14,17 @@ class ThreadProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 2
     def __init__(self): self.discovered = None
 
+    async def async_step_import(self, user_input=None):
+        if not isinstance(user_input, dict) or user_input.get("kind") != "summary":
+            return self.async_abort(reason="invalid_input")
+        root_id = user_input.get("manager_entry_id")
+        root = self.hass.config_entries.async_get_entry(root_id) if isinstance(root_id, str) else None
+        if root is None or not is_manager(root):
+            return self.async_abort(reason="manager_not_ready")
+        await self.async_set_unique_id("thread_proxy_summary_" + root_id)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title="Summary", data={"kind": "summary", "manager_entry_id": root_id})
+
     async def async_step_zeroconf(self, discovery_info):
         if discovery_info.type != SERVICE_TYPE: return self.async_abort(reason="invalid_discovery")
         try:

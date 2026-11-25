@@ -2,7 +2,7 @@
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from .const import PLATFORMS
 from .manager import get_manager
-from .catalog import is_manager
+from .catalog import is_manager, is_summary
 from .br_device import async_set_br_device, br_device_enabled
 from .migration import async_consolidate, async_finish_migration
 
@@ -21,6 +21,16 @@ async def async_migrate_entry(hass, entry):
     return entry.version == 2
 
 async def async_setup_entry(hass, entry):
+    if is_summary(entry):
+        from homeassistant.exceptions import ConfigEntryNotReady
+        from .summary_entry import migrate_summary
+        manager = get_manager(hass)
+        if manager.root_entry is None or manager.root_entry.entry_id != entry.data.get("manager_entry_id"):
+            raise ConfigEntryNotReady("Thread Proxy manager is not ready")
+        migrate_summary(hass, manager.root_entry, entry)
+        entry.runtime_data = manager
+        await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+        return True
     if not is_manager(entry): return True  # Migrated tombstone, removed below.
     manager = get_manager(hass)
     await manager.setup_root(entry)
@@ -29,6 +39,8 @@ async def async_setup_entry(hass, entry):
         for binding in manager.entries():
             if not br_device_enabled(binding): await async_set_br_device(hass, binding)
         await async_finish_migration(hass, entry)
+        from .summary_entry import ensure_summary
+        await ensure_summary(hass, entry)
     except BaseException:
         await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         await manager.unload_root()
@@ -40,6 +52,8 @@ async def _updated(hass, entry):
     if is_manager(entry): await get_manager(hass).sync_root(entry)
 
 async def async_unload_entry(hass, entry):
+    if is_summary(entry):
+        return await hass.config_entries.async_unload_platforms(entry, ["sensor"])
     if not is_manager(entry): return True
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS): return False
     await get_manager(hass).unload_root()

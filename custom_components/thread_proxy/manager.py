@@ -79,6 +79,7 @@ class ProxyManager:
         self.bindings = {record["id"]: Binding.restore(record, entry.entry_id) for record in entry.data.get("bindings", [])}
         for binding in self.bindings.values(): await self.add_entry(binding)
         entry.runtime_data = self
+        for listener in tuple(self.nodes.listeners): listener()
 
     async def register_platform(self, platform, factory, add_entities):
         # Serialize startup platform additions against checkbox/BR mutations.
@@ -291,6 +292,7 @@ class ProxyManager:
             for identity in list(self.runtimes): await self.remove_entry(identity)
             await self.nodes.close()
             self.platforms.clear(); self.bindings.clear(); self.root_entry = None
+            for listener in tuple(self.nodes.listeners): listener()
 
     async def close(self):
         self.closing = True

@@ -9,6 +9,10 @@ MANAGER_ID = "thread_proxy_manager"
 def is_manager(entry):
     return entry.data.get("kind") == "manager"
 
+def is_summary(entry):
+    return entry.data.get("kind") == "summary"
+
+
 @dataclass
 class Binding:
     entry_id: str

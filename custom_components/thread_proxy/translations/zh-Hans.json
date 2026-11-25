@@ -53,7 +53,7 @@
         "name": "疑似离线设备"
       },
       "summary_battery": {
-        "name": "疑似电量设备"
+        "name": "疑似低电量设备"
       }
     },
     "binary_sensor": {

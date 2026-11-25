@@ -5,12 +5,15 @@ from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from .summary import calculate, registered_nodes
 from .const import DOMAIN
+from .catalog import is_summary
 from .const import STATES
 from .entity import ProxyEntity
 from .node_entity import NodeSensor
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([SummarySensor(entry.runtime_data, "offline"), SummarySensor(entry.runtime_data, "battery")])
+    if is_summary(entry):
+        async_add_entities([SummarySensor(entry.runtime_data, "offline", entry), SummarySensor(entry.runtime_data, "battery", entry)])
+        return
     await entry.runtime_data.register_platform("sensor", lambda runtime: [BRStatus(runtime)], async_add_entities)
     await entry.runtime_data.nodes.register_platform("sensor",NodeSensor,async_add_entities)
 
@@ -37,8 +40,8 @@ class SummarySensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, manager, kind):
-        self.manager, self.kind = manager, kind
+    def __init__(self, manager, kind, entry=None):
+        self.manager, self.kind, self.summary_entry = manager, kind, entry
         self._attr_unique_id = f"{manager.root_entry.entry_id}_summary_{kind}"
         self._attr_translation_key = "summary_offline" if kind == "offline" else "summary_battery"
         self._attr_icon = "mdi:lan-disconnect" if kind == "offline" else "mdi:battery-alert"
@@ -58,8 +61,16 @@ class SummarySensor(SensorEntity):
 
     @callback
     def refresh(self, event=None):
+        root = self.manager.root_entry
+        self._attr_available = root is not None
         self.stats = calculate(self.manager.nodes.nodes,
-            registered_nodes(self.hass, self.manager.root_entry.entry_id), self.manager.summary_settings)
+            registered_nodes(self.hass, root.entry_id) if root is not None else set(), self.manager.summary_settings)
+        if self.summary_entry is not None:
+            total = int(self.stats["total"])
+            title = f"Summary · 离线 {int(self.stats['suspect_offline'])}/{total} · 低电量 {int(self.stats['suspect_low_battery'])}/{total}"
+            if root is None: title = "Summary · 管理服务未加载"
+            if self.summary_entry.title != title:
+                self.hass.config_entries.async_update_entry(self.summary_entry, title=title)
         self.async_write_ha_state()
 
     async def async_added_to_hass(self):
