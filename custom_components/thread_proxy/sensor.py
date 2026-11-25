@@ -69,8 +69,8 @@ class SummarySensor(SensorEntity):
             registered_nodes(self.hass, root.entry_id) if root is not None else set(), self.manager.summary_settings)
         if self.summary_entry is not None:
             total = int(self.stats["total"])
-            title = f"Summary · 离线 {int(self.stats['suspect_offline'])}/{total} · 低电量 {int(self.stats['suspect_low_battery'])}/{total} · 弱信号 {int(self.stats['low_rssi'])}/{total}"
-            if root is None: title = "Summary · 管理服务未加载"
+            title = f"离线 {int(self.stats['suspect_offline'])}/{total} · 低电量 {int(self.stats['suspect_low_battery'])}/{total} · 弱信号 {int(self.stats['low_rssi'])}/{total}"
+            if root is None: title = "管理服务未加载"
             if self.summary_entry.title != title:
                 self.hass.config_entries.async_update_entry(self.summary_entry, title=title)
         self.async_write_ha_state()
