@@ -19,10 +19,14 @@ async def async_consolidate(hass):
                               dict(entry.options), root.entry_id)
             records[entry.entry_id] = binding.public_record()
         if entry.entry_id != root.entry_id: pending.add(entry.entry_id)
+    # Preserve existing manager settings on every startup/migration. Legacy BR
+    # entries must not copy their host/key fields into the manager's root data.
+    root_data = dict(root.data) if is_manager(root) else {}
+    root_options = dict(root.options) if is_manager(root) else {}
     # Save every BR before moving registries or deleting any old entry.
     hass.config_entries.async_update_entry(root, title=root.title if is_manager(root) else NAME, unique_id=MANAGER_ID,
-        data={"kind": "manager", "bindings": list(records.values()), "migration_pending": sorted(pending)},
-        options={}, version=2)
+        data={**root_data, "kind": "manager", "bindings": list(records.values()), "migration_pending": sorted(pending)},
+        options=root_options, version=2)
     if pending:
         from homeassistant.helpers import device_registry as dr, entity_registry as er
         devices, entities = dr.async_get(hass), er.async_get(hass)
