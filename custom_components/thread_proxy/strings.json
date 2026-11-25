@@ -48,6 +48,12 @@
           "identity_mismatch": "BR identity mismatch",
           "duplicate_identity": "Duplicate BR binding"
         }
+      },
+      "summary_offline": {
+        "name": "Suspected offline devices"
+      },
+      "summary_battery": {
+        "name": "Suspected low battery devices"
       }
     },
     "binary_sensor": {

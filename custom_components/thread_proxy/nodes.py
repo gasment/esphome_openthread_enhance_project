@@ -55,7 +55,7 @@ class Node:
 class NodeRegistry:
     def __init__(self,hass):
         self.hass=hass;self.entry=None;self.nodes={};self.platforms={};self.entities={}
-        self.store=None;self.loading=False;self.requests={};self.tasks=set();self.removals={};self.closing=False;self.deleting=set();self.source_resolver=lambda identity:{}
+        self.store=None;self.loading=False;self.requests={};self.tasks=set();self.removals={};self.closing=False;self.deleting=set();self.source_resolver=lambda identity:{};self.listeners=set()
 
     async def load(self,entry):
         from homeassistant.helpers.storage import Store
@@ -89,6 +89,7 @@ class NodeRegistry:
                          for n in self.nodes.values() if n.info is not None]}
 
     def save(self):
+        for listener in tuple(self.listeners):listener()
         if self.store is not None and not self.loading:self.store.async_delay_save(self.dump,1)
 
     def note_source(self,packet,br_id,notify=True):

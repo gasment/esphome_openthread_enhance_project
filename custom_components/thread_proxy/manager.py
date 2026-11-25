@@ -11,6 +11,7 @@ from .catalog import Binding, new_binding, is_manager
 from .connection import ProxyConnection
 from .uplink import PacketHub
 from .nodes import NodeRegistry
+from .summary import get_settings, validate_settings
 from .const import DOMAIN, SERVICE_TYPE, DEFAULT_PORT
 from .models import BRState, Discovery, discovery_host, host_name, api_port, encryption_key
 
@@ -148,6 +149,18 @@ class ProxyManager:
                 if self.runtimes[binding.entry_id].br_device_enabled != br_device_enabled(binding):
                     await async_set_br_device(self.hass, binding)
 
+    @property
+    def summary_settings(self):
+        return get_settings(self.root_entry.data if self.root_entry is not None else {})
+
+    async def set_summary_settings(self, values):
+        policy = validate_settings(values)
+        async with self.lock:
+            if self.root_entry is None: raise ValueError("manager_not_ready")
+            self.hass.config_entries.async_update_entry(self.root_entry,
+                data={**self.root_entry.data, "summary_settings": policy})
+            for listener in tuple(self.nodes.listeners): listener()
+
     async def set_device(self, binding, enabled):
         async with self.lock:
             await async_set_br_device(self.hass, binding, enabled, persist=True)
@@ -270,7 +283,7 @@ class ProxyManager:
         identities = {entry.unique_id for entry in self.entries() if entry.unique_id}
         endpoints = {(entry.data.get("host"), entry.data.get("port", DEFAULT_PORT)) for entry in self.entries()}
         found = [item.public() for item in self.discovered.values() if item.id not in identities and (item.host, item.port) not in endpoints and item.present]
-        return {"bound": sorted(bound, key=lambda item: item["name"].casefold()),
+        return {"summary_settings": self.summary_settings, "bound": sorted(bound, key=lambda item: item["name"].casefold()),
                 "discovered": sorted(found, key=lambda item: item["name"].casefold()), "data_plane_ready": any(item["data_plane_ready"] for item in bound), "uplink": {**self.uplink.snapshot(),"node_devices":sum(node.info is not None and not node.suspended for node in self.nodes.nodes.values()),"node_entities":len(self.nodes.entities),"node_sources":self.nodes.public_nodes()}}
 
     async def unload_root(self):

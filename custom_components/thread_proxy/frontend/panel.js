@@ -34,6 +34,8 @@ class ThreadProxyPanel extends HTMLElement {
         .row.node-source-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) max-content;padding:10px 14px;gap:16px;min-height:42px}
         .node-source-row>.title,.node-source-br{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}.node-source-time{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
         @media(max-width:540px){.row.node-source-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px}.node-source-time{grid-column:1 / -1;text-align:left}}
+        .source-heading button{padding:6px 11px;font-size:13px}.source-heading h2{min-width:0}
+        dialog{width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:22px;border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color);color:var(--primary-text-color)}dialog::backdrop{background:rgba(0,0,0,.45)}#summary-form{grid-template-columns:minmax(0,1fr) minmax(80px,.5fr);border:0;padding:0}#summary-form .summary-wide{grid-column:1 / -1}#summary-form [hidden]{display:none!important}#summary-form select{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid var(--divider-color);border-radius:7px;color:var(--primary-text-color);background:var(--primary-background-color)}#summary-error{min-height:0;margin-top:0}#summary-form .form-actions{grid-row:auto}
       </style>
       <header><ha-menu-button></ha-menu-button><h1>BR 接入管理</h1><a class="back-link" href="/config/integrations/integration/thread_proxy">返回集成</a></header>
       <main>
@@ -49,13 +51,57 @@ class ThreadProxyPanel extends HTMLElement {
         </form>
         <div id="error" class="error" role="alert"></div>
         <section><h2>已绑定 BR</h2><div id="bound" class="list"></div></section>
-        <section><h2>代理节点 · 最近上报来源</h2><div id="node-sources" class="list"></div></section>
+        <section><div class="top source-heading"><h2>代理节点 · 最近上报来源</h2><button id="summary-settings" type="button">统计设置</button></div><div id="node-sources" class="list"></div></section>
         <section><h2>发现的 BR</h2><div class="muted hint">点击接入后建立绑定；已绑定的 BR 不会在此重复显示。</div><div id="discovered" class="list"></div></section>
-      </main>`;
+      </main>
+      <dialog id="summary-dialog" aria-labelledby="summary-title">
+        <h2 id="summary-title">节点统计设置</h2>
+        <form id="summary-form">
+          <label>疑似离线等待时长<input name="offline_amount" type="number" min="0.0001" step="any" required></label>
+          <label>时间单位<select name="offline_unit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></label>
+          <label class="summary-wide">低电量判断依据<select name="battery_source"><option value="battery">battery（电量百分比）</option><option value="voltage">voltage（电压）</option></select></label>
+          <label class="summary-wide" id="battery-threshold-label">低电量阈值（%）<input name="battery_threshold" type="number" min="0" max="100" step="any" required></label>
+          <label class="summary-wide" id="voltage-threshold-label">低电压阈值（V）<input name="voltage_threshold" type="number" min="0" max="1000" step="any" required></label>
+          <div class="muted summary-wide">离线：超过等待时长；低电量：低于所选阈值。同一节点有多个匹配实体时，任一个低于阈值即计入。无有效数据的节点不计为正常或异常。</div>
+          <div id="summary-error" class="error summary-wide" role="alert"></div>
+          <div class="form-actions summary-wide"><button id="summary-cancel" type="button">取消</button><button type="submit" class="primary">保存设置</button></div>
+        </form>
+      </dialog>`;
     this.shadowRoot.getElementById("add").onclick = () => {this.clearCandidate();this.form.reset();this.form.hidden=false;};
     this.shadowRoot.getElementById("cancel").onclick = () => {this.form.hidden = true; this.form.reset();this.clearCandidate();};
     this.shadowRoot.getElementById("refresh").onclick = () => this.refresh();
     this.form.elements.clear_key.onchange=()=>{this.form.elements.noise_psk.disabled=this.form.elements.clear_key.checked;};
+    const summaryDialog=this.shadowRoot.getElementById("summary-dialog");
+    const summaryForm=this.shadowRoot.getElementById("summary-form");
+    const selectSource=()=>{
+      this.shadowRoot.getElementById("battery-threshold-label").hidden=summaryForm.elements.battery_source.value!=="battery";
+      this.shadowRoot.getElementById("voltage-threshold-label").hidden=summaryForm.elements.battery_source.value!=="voltage";
+      summaryForm.elements.battery_threshold.disabled=summaryForm.elements.battery_source.value!=="battery";
+      summaryForm.elements.voltage_threshold.disabled=summaryForm.elements.battery_source.value!=="voltage";
+    };
+    this.shadowRoot.getElementById("summary-settings").onclick=()=>{
+      const policy=this._summarySettings||{offline_after:1800,battery_source:"battery",battery_threshold:20,voltage_threshold:3};
+      const seconds=policy.offline_after;
+      const unit=seconds%3600===0?3600:seconds%60===0?60:1;
+      summaryForm.elements.offline_unit.value=String(unit);summaryForm.elements.offline_amount.value=seconds/unit;
+      for(const key of ["battery_source","battery_threshold","voltage_threshold"])summaryForm.elements[key].value=policy[key];
+      this.shadowRoot.getElementById("summary-error").textContent="";selectSource();summaryDialog.showModal();
+    };
+    summaryForm.elements.battery_source.onchange=selectSource;
+    this.shadowRoot.getElementById("summary-cancel").onclick=()=>summaryDialog.close();
+    summaryForm.onsubmit=async e=>{
+      e.preventDefault();
+      const policy={offline_after:Number(summaryForm.elements.offline_amount.value)*Number(summaryForm.elements.offline_unit.value),
+        battery_source:summaryForm.elements.battery_source.value,battery_threshold:Number(summaryForm.elements.battery_threshold.value),
+        voltage_threshold:Number(summaryForm.elements.voltage_threshold.value)};
+      if(policy.battery_source==="battery")policy.voltage_threshold=this._summarySettings?.voltage_threshold??3;
+      else policy.battery_threshold=this._summarySettings?.battery_threshold??20;
+      if(!Number.isInteger(policy.offline_after)||policy.offline_after<1||policy.offline_after>31536000){
+        this.shadowRoot.getElementById("summary-error").textContent="等待时长须为 1 秒至 365 天，且换算后为整数秒。";return;
+      }
+      if(await this.action("summary_settings",policy))summaryDialog.close();
+      else this.shadowRoot.getElementById("summary-error").textContent=this.shadowRoot.getElementById("error").textContent;
+    };
     this.form.onsubmit = async e => {
       e.preventDefault(); const data=Object.fromEntries(new FormData(this.form));data.port=Number(data.port);
       let inputs,action="bind";
@@ -89,6 +135,7 @@ class ThreadProxyPanel extends HTMLElement {
   button(label,fn,danger=false){const b=this.text("button",label,danger?"danger":"");b.onclick=fn;return b;}
   endpoint(item){return `${item.host.includes(":")?`[${item.host}]`:item.host}:${item.port}`;}
   render(data){
+    this._summarySettings=data.summary_settings;
     this.renderNodeSources(data.uplink?.node_sources||[]);
     const online=data.bound.filter(x=>x.connected).length;
     this.shadowRoot.getElementById("counts").textContent=`${data.bound.length} 台已绑定 · ${online} 台 API 在线 · ${data.discovered.length} 台待接入 · ${data.uplink?.node_devices??0} 个节点`;

@@ -7,7 +7,7 @@ from .const import DOMAIN, PANEL_PATH
 
 class ProxyView(HomeAssistantView):
     url = "/api/thread_proxy"
-    extra_urls = [f"/api/thread_proxy/{action}" for action in ("bind", "unbind", "reconnect", "create_device", "reconfigure")]
+    extra_urls = [f"/api/thread_proxy/{action}" for action in ("bind", "unbind", "reconnect", "create_device", "reconfigure", "summary_settings")]
     name = "api:thread_proxy"
     requires_auth = True
 
@@ -27,10 +27,13 @@ class ProxyView(HomeAssistantView):
         except (ValueError, TypeError): return self.json({"error": "invalid_input"}, status_code=400)
         if not isinstance(data, dict): return self.json({"error": "invalid_input"}, status_code=400)
         action = request.path.rsplit("/", 1)[-1]
-        if action not in ("bind", "unbind", "reconnect", "create_device", "reconfigure"):
+        if action not in ("bind", "unbind", "reconnect", "create_device", "reconfigure", "summary_settings"):
             return self.json({"error": "invalid_action"}, status_code=400)
         from .br_device import BrDeviceError
         try:
+            if action == "summary_settings":
+                await self.manager.set_summary_settings(data)
+                return self.json({"ok": True})
             if action == "bind":
                 inputs = {key: data[key] for key in ("host", "port", "name", "noise_psk", "create_device") if key in data}
                 if "candidate_id" in data:
@@ -68,7 +71,7 @@ async def async_setup_frontend(hass, manager):
     await hass.http.async_register_static_paths([StaticPathConfig("/thread_proxy_static", str(Path(__file__).parent / "frontend"), cache_headers=False)])
     hass.http.register_view(ProxyView(hass, manager))
     from homeassistant.components.frontend import add_extra_js_url
-    add_extra_js_url(hass, "/thread_proxy_static/integration-entry.js?v=0.9.1")
+    add_extra_js_url(hass, "/thread_proxy_static/integration-entry.js?v=2026.11.25")
     await panel_custom.async_register_panel(hass, frontend_url_path=PANEL_PATH, webcomponent_name="thread-proxy-panel",
-        sidebar_title=None, sidebar_icon="mdi:router-network", module_url="/thread_proxy_static/panel.js?v=0.9.1", require_admin=True)
+        sidebar_title=None, sidebar_icon="mdi:router-network", module_url="/thread_proxy_static/panel.js?v=2026.11.25", require_admin=True)
     manager.panel_registered = True

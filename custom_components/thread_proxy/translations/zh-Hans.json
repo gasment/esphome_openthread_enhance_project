@@ -48,6 +48,12 @@
           "identity_mismatch": "BR 身份不符",
           "duplicate_identity": "BR 重复绑定"
         }
+      },
+      "summary_offline": {
+        "name": "疑似离线设备"
+      },
+      "summary_battery": {
+        "name": "疑似电量设备"
       }
     },
     "binary_sensor": {
