@@ -12,7 +12,7 @@ from .node_entity import NodeSensor
 
 async def async_setup_entry(hass, entry, async_add_entities):
     if is_summary(entry):
-        async_add_entities([SummarySensor(entry.runtime_data, "offline", entry), SummarySensor(entry.runtime_data, "battery", entry)])
+        async_add_entities([SummarySensor(entry.runtime_data, "offline", entry), SummarySensor(entry.runtime_data, "battery", entry), SummarySensor(entry.runtime_data, "rssi", entry)])
         return
     await entry.runtime_data.register_platform("sensor", lambda runtime: [BRStatus(runtime)], async_add_entities)
     await entry.runtime_data.nodes.register_platform("sensor",NodeSensor,async_add_entities)
@@ -43,20 +43,22 @@ class SummarySensor(SensorEntity):
     def __init__(self, manager, kind, entry=None):
         self.manager, self.kind, self.summary_entry = manager, kind, entry
         self._attr_unique_id = f"{manager.root_entry.entry_id}_summary_{kind}"
-        self._attr_translation_key = "summary_offline" if kind == "offline" else "summary_battery"
-        self._attr_icon = "mdi:lan-disconnect" if kind == "offline" else "mdi:battery-alert"
+        self._attr_translation_key = {"offline": "summary_offline", "battery": "summary_battery", "rssi": "summary_rssi"}[kind]
+        self._attr_icon = {"offline": "mdi:lan-disconnect", "battery": "mdi:battery-alert", "rssi": "mdi:signal-cellular-1"}[kind]
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, "summary_" + manager.root_entry.entry_id)},
             name="Summary", manufacturer="Thread Proxy", model="Node statistics")
         self.stats = calculate({}, set(), manager.summary_settings)
 
     @property
     def native_value(self):
-        key = "suspect_offline" if self.kind == "offline" else "suspect_low_battery"
+        key = {"offline": "suspect_offline", "battery": "suspect_low_battery", "rssi": "low_rssi"}[self.kind]
         return f"{int(self.stats[key])}/{int(self.stats['total'])}"
 
     @property
     def extra_state_attributes(self):
-        keys = ("suspect_offline", "total", "online") if self.kind == "offline" else ("suspect_low_battery", "total", "battery_healthy")
+        keys = {"offline": ("suspect_offline", "total", "online"),
+                "battery": ("suspect_low_battery", "total", "battery_healthy"),
+                "rssi": ("low_rssi", "total", "rssi_healthy")}[self.kind]
         return {key: self.stats[key] for key in keys}
 
     @callback
@@ -67,7 +69,7 @@ class SummarySensor(SensorEntity):
             registered_nodes(self.hass, root.entry_id) if root is not None else set(), self.manager.summary_settings)
         if self.summary_entry is not None:
             total = int(self.stats["total"])
-            title = f"Summary · 离线 {int(self.stats['suspect_offline'])}/{total} · 低电量 {int(self.stats['suspect_low_battery'])}/{total}"
+            title = f"Summary · 离线 {int(self.stats['suspect_offline'])}/{total} · 低电量 {int(self.stats['suspect_low_battery'])}/{total} · 弱信号 {int(self.stats['low_rssi'])}/{total}"
             if root is None: title = "Summary · 管理服务未加载"
             if self.summary_entry.title != title:
                 self.hass.config_entries.async_update_entry(self.summary_entry, title=title)

@@ -54,6 +54,9 @@
       },
       "summary_battery": {
         "name": "疑似低电量设备"
+      },
+      "summary_rssi": {
+        "name": "弱信号设备"
       }
     },
     "binary_sensor": {

@@ -17,7 +17,7 @@ def migrate_summary(hass, root, summary):
     if device is not None and device.config_entry_id == root.entry_id:
         devices.async_update_device(device.id, new_config_entry_id=summary.entry_id,
                                     new_config_subentry_id=None, via_device_id=None)
-    for kind in ("offline", "battery"):
+    for kind in ("offline", "battery", "rssi"):
         unique_id = f"{root.entry_id}_summary_{kind}"
         entity_id = entities.async_get_entity_id("sensor", DOMAIN, unique_id)
         if entity_id is None:

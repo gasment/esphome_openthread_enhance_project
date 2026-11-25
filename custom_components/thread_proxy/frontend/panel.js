@@ -62,7 +62,8 @@ class ThreadProxyPanel extends HTMLElement {
           <label class="summary-wide">低电量判断依据<select name="battery_source"><option value="battery">battery（电量百分比）</option><option value="voltage">voltage（电压）</option></select></label>
           <label class="summary-wide" id="battery-threshold-label">低电量阈值（%）<input name="battery_threshold" type="number" min="0" max="100" step="any" required></label>
           <label class="summary-wide" id="voltage-threshold-label">低电压阈值（V）<input name="voltage_threshold" type="number" min="0" max="1000" step="any" required></label>
-          <div class="muted summary-wide">离线：超过等待时长；低电量：低于所选阈值。同一节点有多个匹配实体时，任一个低于阈值即计入。无有效数据的节点不计为正常或异常。</div>
+          <label class="summary-wide">弱信号阈值（dBm）<input name="rssi_threshold" type="number" min="-200" max="0" step="any" required></label>
+          <div class="muted summary-wide">离线：超过等待时长；低电量：低于所选阈值。同一节点有多个匹配实体时，任一个低于阈值即计入。弱信号：任一 dBm 读数低于阈值。无有效数据的节点不计为正常或异常。</div>
           <div id="summary-error" class="error summary-wide" role="alert"></div>
           <div class="form-actions summary-wide"><button id="summary-cancel" type="button">取消</button><button type="submit" class="primary">保存设置</button></div>
         </form>
@@ -80,11 +81,11 @@ class ThreadProxyPanel extends HTMLElement {
       summaryForm.elements.voltage_threshold.disabled=summaryForm.elements.battery_source.value!=="voltage";
     };
     this.shadowRoot.getElementById("summary-settings").onclick=()=>{
-      const policy=this._summarySettings||{offline_after:1800,battery_source:"battery",battery_threshold:20,voltage_threshold:3};
+      const policy={offline_after:1800,battery_source:"battery",battery_threshold:20,voltage_threshold:3,rssi_threshold:-75,...this._summarySettings};
       const seconds=policy.offline_after;
       const unit=seconds%3600===0?3600:seconds%60===0?60:1;
       summaryForm.elements.offline_unit.value=String(unit);summaryForm.elements.offline_amount.value=seconds/unit;
-      for(const key of ["battery_source","battery_threshold","voltage_threshold"])summaryForm.elements[key].value=policy[key];
+      for(const key of ["battery_source","battery_threshold","voltage_threshold","rssi_threshold"])summaryForm.elements[key].value=policy[key];
       this.shadowRoot.getElementById("summary-error").textContent="";selectSource();summaryDialog.showModal();
     };
     summaryForm.elements.battery_source.onchange=selectSource;
@@ -93,7 +94,7 @@ class ThreadProxyPanel extends HTMLElement {
       e.preventDefault();
       const policy={offline_after:Number(summaryForm.elements.offline_amount.value)*Number(summaryForm.elements.offline_unit.value),
         battery_source:summaryForm.elements.battery_source.value,battery_threshold:Number(summaryForm.elements.battery_threshold.value),
-        voltage_threshold:Number(summaryForm.elements.voltage_threshold.value)};
+        voltage_threshold:Number(summaryForm.elements.voltage_threshold.value),rssi_threshold:Number(summaryForm.elements.rssi_threshold.value)};
       if(policy.battery_source==="battery")policy.voltage_threshold=this._summarySettings?.voltage_threshold??3;
       else policy.battery_threshold=this._summarySettings?.battery_threshold??20;
       if(!Number.isInteger(policy.offline_after)||policy.offline_after<1||policy.offline_after>31536000){

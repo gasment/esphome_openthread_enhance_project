@@ -2,12 +2,12 @@
 from datetime import datetime, UTC
 import math
 
-DEFAULTS = {"offline_after": 1800, "battery_source": "battery", "battery_threshold": 20.0, "voltage_threshold": 3.0}
+DEFAULTS = {"offline_after": 1800, "battery_source": "battery", "battery_threshold": 20.0, "voltage_threshold": 3.0, "rssi_threshold": -75.0}
 
 def validate_settings(values):
-    if not isinstance(values, dict) or set(values) != set(DEFAULTS):
+    if not isinstance(values, dict) or set(values) not in (set(DEFAULTS), set(DEFAULTS) - {"rssi_threshold"}):
         raise ValueError("invalid_input")
-    result = dict(values)
+    result = {**DEFAULTS, **values}
     if type(result["offline_after"]) is not int or not 1 <= result["offline_after"] <= 31536000:
         raise ValueError("invalid_input")
     if result["battery_source"] not in ("battery", "voltage"):
@@ -19,6 +19,10 @@ def validate_settings(values):
         if not 0 <= value <= (100 if key == "battery_threshold" else 1000):
             raise ValueError("invalid_input")
         result[key] = float(value)
+    rssi = result["rssi_threshold"]
+    if isinstance(rssi, bool) or not isinstance(rssi, (int, float)) or not math.isfinite(rssi) or not -200 <= rssi <= 0:
+        raise ValueError("invalid_input")
+    result["rssi_threshold"] = float(rssi)
     return result
 
 def get_settings(data):
@@ -29,7 +33,7 @@ def get_settings(data):
 
 def calculate(nodes, macs, settings, now=None):
     now = now or datetime.now(UTC)
-    offline = online = low = healthy = 0
+    offline = online = low = healthy = weak = rssi_healthy = 0
     source = settings["battery_source"]
     threshold = settings[source + "_threshold"]
     for mac in set(macs):
@@ -46,15 +50,19 @@ def calculate(nodes, macs, settings, now=None):
                 online += 1
         except (ValueError, TypeError):
             pass  # No timestamp is unknown, not evidence of online/offline.
-        readings = []
+        readings, rssi_readings = [], []
         for key, info in node.infos.items():
-            if key[0] not in ("Sensor", "Number") or getattr(info, "device_class", None) != source:
+            if key[0] not in ("Sensor", "Number"):
                 continue
             state = node.states.get(key)
             value = getattr(state, "state", None)
             if getattr(state, "missing_state", False) or isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 continue
             unit = getattr(info, "unit_of_measurement", "")
+            if unit == "dBm":
+                rssi_readings.append(value)
+            if getattr(info, "device_class", None) != source:
+                continue
             if source == "voltage":
                 scale = {"": 1, "V": 1, "mV": .001, "µV": .000001, "uV": .000001, "kV": 1000}.get(unit)
                 if scale is None:
@@ -65,13 +73,19 @@ def calculate(nodes, macs, settings, now=None):
             if value < 0:
                 continue
             readings.append(value)
+        if rssi_readings:
+            if any(value < settings["rssi_threshold"] for value in rssi_readings):
+                weak += 1
+            else:
+                rssi_healthy += 1
         if readings:
             if any(value < threshold for value in readings):
                 low += 1
             else:
                 healthy += 1
     return {"total": float(len(set(macs))), "suspect_offline": float(offline), "online": float(online),
-            "suspect_low_battery": float(low), "battery_healthy": float(healthy)}
+            "suspect_low_battery": float(low), "battery_healthy": float(healthy),
+            "low_rssi": float(weak), "rssi_healthy": float(rssi_healthy)}
 
 def registered_nodes(hass, entry_id):
     from homeassistant.helpers import device_registry as dr

@@ -54,6 +54,9 @@
       },
       "summary_battery": {
         "name": "Suspected low battery devices"
+      },
+      "summary_rssi": {
+        "name": "Weak signal devices"
       }
     },
     "binary_sensor": {
