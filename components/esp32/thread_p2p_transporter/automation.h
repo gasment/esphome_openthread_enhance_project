@@ -3,6 +3,7 @@
 #include "esphome/core/defines.h"
 #include "esphome/core/log.h"
 #include "thread_p2p_transporter.h"
+#include <memory>
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
 #endif
@@ -47,13 +48,29 @@ template<typename... Ts> class SendAction : public Action<Ts...> {
   void set_target_is_address(bool value) { direct_ = value; }
   void set_payload_kind(uint8_t value) { kind_ = PayloadType(value); }
   void set_ack(uint32_t timeout, uint8_t resend) { timeout_ = timeout; resend_ = resend; }
+  Trigger<uint8_t, uint32_t> *get_success_trigger() {
+    if (!success_trigger_) success_trigger_ = std::make_unique<Trigger<uint8_t, uint32_t>>();
+    return success_trigger_.get();
+  }
+  Trigger<uint8_t, uint32_t> *get_fail_trigger() {
+    if (!fail_trigger_) fail_trigger_ = std::make_unique<Trigger<uint8_t, uint32_t>>();
+    return fail_trigger_.get();
+  }
   void play(const Ts &...x) override {
     Payload payload;
     if (kind_ == PayloadType::BOOL) payload = Payload::from_bool(bool_payload_.value(x...));
     else if (kind_ == PayloadType::FLOAT) payload = Payload::from_float(float_payload_.value(x...));
     else payload = Payload::from_string(string_payload_.value(x...));
     const auto port = has_port_ ? std::optional<uint16_t>(port_.value(x...)) : std::nullopt;
-    parent_->send(target_.value(x...), direct_, port, send_flag_.value(x...), payload, timeout_, resend_);
+    ThreadP2PTransporter::SendCompletion completion;
+    if (success_trigger_ || fail_trigger_) {
+      completion = [this](bool success, uint8_t flag, uint32_t message_id) {
+        auto *trigger = success ? success_trigger_.get() : fail_trigger_.get();
+        if (trigger != nullptr) trigger->trigger(flag, message_id);
+      };
+    }
+    parent_->send(target_.value(x...), direct_, port, send_flag_.value(x...), payload, timeout_, resend_,
+                  std::move(completion));
   }
  protected:
   ThreadP2PTransporter *parent_;
@@ -61,6 +78,7 @@ template<typename... Ts> class SendAction : public Action<Ts...> {
   PayloadType kind_{PayloadType::STRING};
   uint32_t timeout_{0};
   uint8_t resend_{0};
+  std::unique_ptr<Trigger<uint8_t, uint32_t>> success_trigger_, fail_trigger_;
 };
 
 // Values come from the automation's own argument tuple, including after delays.

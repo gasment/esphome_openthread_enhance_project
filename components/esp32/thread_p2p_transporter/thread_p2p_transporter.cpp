@@ -210,23 +210,32 @@ bool ThreadP2PTransporter::transmit_(const otIp6Address &target, uint16_t port, 
   return true;
 }
 
-void ThreadP2PTransporter::notify_fail_(uint8_t flag, uint32_t id) {
+void ThreadP2PTransporter::complete_(bool success, uint8_t flag, uint32_t id, const SendCompletion &completion) {
+  if (shutdown_) return;
+  if (success) {
+    ESP_LOGD(TAG, "Message %u flag=0x%02X acknowledged", unsigned(id), flag);
+    success_callbacks_.call(flag, id);
+  } else {
+    ESP_LOGW(TAG, "Message %u flag=0x%02X failed", unsigned(id), flag);
+    fail_callbacks_.call(flag, id);
+  }
+  if (!shutdown_ && completion) completion(success, flag, id);
+}
+
+void ThreadP2PTransporter::notify_fail_(uint8_t flag, uint32_t id, SendCompletion completion) {
   // Defer local rejection too: a send action must finish before its completion callback runs.
-  defer([this, flag, id]() {
-    if (!shutdown_) {
-      ESP_LOGW(TAG, "Message %u flag=0x%02X failed", unsigned(id), flag);
-      fail_callbacks_.call(flag, id);
-    }
+  defer([this, flag, id, completion = std::move(completion)]() {
+    this->complete_(false, flag, id, completion);
   });
 }
 
 bool ThreadP2PTransporter::send(const std::string &target, bool direct_address, std::optional<uint16_t> port_override, uint8_t flag,
-                              const Payload &payload, uint32_t timeout, uint8_t resend) {
+                              const Payload &payload, uint32_t timeout, uint8_t resend, SendCompletion completion) {
   if (++sequence_ == 0) { session_ = (uint64_t(esp_random()) << 32) | esp_random(); sequence_ = 1; }
   const uint32_t id = sequence_;
-  auto reject = [this, flag, id, timeout](const char *reason) {
+  auto reject = [this, flag, id, timeout, &completion](const char *reason) {
     ESP_LOGW(TAG, "Message %u rejected: %s", unsigned(id), reason);
-    if (timeout) notify_fail_(flag, id);
+    if (timeout) notify_fail_(flag, id, std::move(completion));
     return false;
   };
   std::string body;
@@ -266,7 +275,7 @@ bool ThreadP2PTransporter::send(const std::string &target, bool direct_address, 
       (!sender_only_ && std::memcmp(destination.mFields.m8, address_.mFields.m8, 16) == 0))
     return reject("target must be a nonlocal unicast address in the active Mesh-Local /64");
   std::string wire = header(1, uint8_t(payload.type), flag, timeout != 0, session_, id, body.size()) + body;
-  if (timeout) pending_.push_back({destination, port, flag, resend, id, timeout, millis(), wire});
+  if (timeout) pending_.push_back({destination, port, flag, resend, id, timeout, millis(), wire, std::move(completion)});
   bool submitted = transmit_(destination, port, wire);
   if (!submitted) ESP_LOGW(TAG, "Message %u UDP submission failed%s", unsigned(id), timeout ? "; ACK retry remains active" : "");
   return submitted;
@@ -287,9 +296,9 @@ void ThreadP2PTransporter::process_(const Packet &packet) {
       const auto &entry = pending_[i];
       if (session == session_ && id == entry.id && flag == entry.flag && packet.port == entry.port &&
           std::memcmp(packet.source.mFields.m8, entry.destination.mFields.m8, 16) == 0) {
+        auto completion = std::move(pending_[i].completion);
         pending_.erase(pending_.begin() + i);
-        ESP_LOGD(TAG, "Message %u flag=0x%02X acknowledged", unsigned(id), flag);
-        success_callbacks_.call(flag, id);
+        complete_(true, flag, id, completion);
         return;
       }
     }
@@ -336,7 +345,6 @@ void ThreadP2PTransporter::loop() {
     if (shutdown_) return;
   }
   // Remove before callbacks, so callbacks can enqueue new messages safely.
-  std::vector<std::pair<uint8_t, uint32_t>> failed;
   for (size_t i = 0; i < pending_.size();) {
     auto &entry = pending_[i];
     if (uint32_t(millis() - entry.started) < entry.timeout) { i++; continue; }
@@ -345,11 +353,13 @@ void ThreadP2PTransporter::loop() {
       transmit_(entry.destination, entry.port, entry.wire);
       i++;
     } else {
-      failed.emplace_back(entry.flag, entry.id);
+      const uint8_t flag = entry.flag;
+      const uint32_t id = entry.id;
+      auto completion = std::move(entry.completion);
       pending_.erase(pending_.begin() + i);
+      notify_fail_(flag, id, std::move(completion));
     }
   }
-  for (const auto &entry : failed) notify_fail_(entry.first, entry.second);
 }
 
 void ThreadP2PTransporter::on_shutdown() {

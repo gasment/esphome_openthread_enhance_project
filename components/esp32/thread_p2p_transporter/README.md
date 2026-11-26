@@ -307,3 +307,26 @@ ACK不包含负载，type=0，回显session、message_id和send_flag。
 P2P 通道与 Thread SED API 独立；旧的 transporter / 实体桥业务链路已移除。
 覆盖三种负载、接收过滤、延时上下文、本地发布、接收回调内发送和ACK回调。
 构建检查资料位于项目 `temp`，未刷写设备或验证实机收发、多跳及ACK丢失重试。
+
+
+## send 动作级结果回调
+
+ESP32 与 nRF52 一样支持 `send` 下的 `on_send_success`、`on_send_fail`，使用动作级回调时必须配置 `ack`：
+
+```yaml
+- thread_p2p_transporter.send:
+    id: p2p_transport
+    send_to: 2flv-sublight-wallsw  # 已在 send_to_addr_list 中定义的目标别名
+    send_flag: 35
+    payload_type: string
+    payload: ask_lsw_off
+    ack:
+      timeout: 500ms
+      resend: 2
+    on_send_success:
+      - logger.log: "收到本次消息 ACK"
+    on_send_fail:
+      - switch.turn_on: rly1
+```
+
+回调参数为 `send_flag`（uint8_t）、`message_id`（uint32_t）。回调随每条待确认消息独立保存，相同 flag 或同一动作并发发送不共享消息结果；收到匹配 ACK 后成功一次，本地拒绝或重试耗尽后失败一次。本地失败延迟到动作返回后触发；回调之前先移除待确认消息，允许回调中继续发送。重复/迟到 ACK 不重复触发。组件级回调保留，先执行组件级、再执行本次动作级回调；若组件级回调已触发关闭，动作级回调跳过。关闭时取消剩余消息，不触发动作级结果回调。send 仍为非阻塞，不等待 ACK 才执行后续动作；报文协议不变，无需更新接收端。

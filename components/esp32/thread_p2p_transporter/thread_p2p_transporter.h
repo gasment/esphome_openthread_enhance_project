@@ -36,6 +36,7 @@ struct Payload {
 
 class ThreadP2PTransporter : public Component {
  public:
+  using SendCompletion = std::function<void(bool, uint8_t, uint32_t)>;
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -48,7 +49,7 @@ class ThreadP2PTransporter : public Component {
   }
   bool is_ready() const { return !shutdown_ && ready_ && ot_ != nullptr && ot_->is_connected(); }
   bool send(const std::string &target, bool direct_address, std::optional<uint16_t> port_override, uint8_t flag,
-            const Payload &payload, uint32_t ack_timeout = 0, uint8_t resend = 0);
+            const Payload &payload, uint32_t ack_timeout = 0, uint8_t resend = 0, SendCompletion completion = {});
   void add_on_receive_callback(std::function<void(uint8_t, Payload)> fn) { receive_callbacks_.add(std::move(fn)); }
   void add_on_send_success_callback(std::function<void(uint8_t, uint32_t)> fn) { success_callbacks_.add(std::move(fn)); }
   void add_on_send_fail_callback(std::function<void(uint8_t, uint32_t)> fn) { fail_callbacks_.add(std::move(fn)); }
@@ -65,6 +66,7 @@ class ThreadP2PTransporter : public Component {
     uint8_t flag, retries;
     uint32_t id, timeout, started;
     std::string wire;
+    SendCompletion completion;
   };
   struct Seen {
     otIp6Address source;
@@ -76,7 +78,8 @@ class ThreadP2PTransporter : public Component {
   bool open_();
   bool transmit_(const otIp6Address &target, uint16_t port, const std::string &wire);
   void process_(const Packet &packet);
-  void notify_fail_(uint8_t flag, uint32_t id);
+  void notify_fail_(uint8_t flag, uint32_t id, SendCompletion completion = {});
+  void complete_(bool success, uint8_t flag, uint32_t id, const SendCompletion &completion);
   openthread::OpenThreadComponent *ot_{nullptr};
   otUdpSocket socket_{};
   otIp6Address address_{};

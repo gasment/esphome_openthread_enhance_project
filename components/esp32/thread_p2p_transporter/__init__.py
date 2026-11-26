@@ -193,6 +193,8 @@ def validate_send(config):
     if ("send_to" in config) == ("address" in config):
         raise cv.Invalid("Specify exactly one of send_to and address")
     config["payload"] = cv.templatable(PAYLOAD_VALIDATORS[config["payload_type"]])(config["payload"])
+    if any(key in config for key in ("on_send_success", "on_send_fail")) and "ack" not in config:
+        raise cv.Invalid("Action send callbacks require ack; success means a matching receipt ACK")
     return config
 
 
@@ -205,6 +207,8 @@ SEND_SCHEMA = cv.All(cv.Schema({
     cv.Required("payload_type"): cv.one_of("bool", "float", "string", lower=True),
     cv.Required("payload"): lambda value: value,
     cv.Optional("ack"): ACK_SCHEMA,
+    cv.Optional("on_send_success"): automation.validate_automation(single=True),
+    cv.Optional("on_send_fail"): automation.validate_automation(single=True),
 }), validate_send)
 
 
@@ -241,6 +245,10 @@ async def send_to_code(config, action_id, template_arg, args):
         await cg.templatable(config["payload"], args, PAYLOAD_CPP[kind])))
     if "ack" in config:
         cg.add(var.set_ack(config["ack"]["timeout"].total_milliseconds, config["ack"]["resend"]))
+    for key, getter in (("on_send_success", "get_success_trigger"), ("on_send_fail", "get_fail_trigger")):
+        if key in config:
+            await automation.build_automation(getattr(var, getter)(),
+                [(cg.uint8, "send_flag"), (cg.uint32, "message_id")], config[key])
     return var
 
 
