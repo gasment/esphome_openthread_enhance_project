@@ -68,6 +68,10 @@ class DeepSleepComponent : public Component {
     pin_event_triggers_.push_back({pin, trigger});
   }
   void add_abort_trigger(Trigger<AbortReason> *trigger) { abort_triggers_.push_back(trigger); }
+  // Runs after user sleep work, before PM. A false result cancels sleep.
+  void add_peripheral_prepare_callback(std::function<bool()> callback) {
+    peripheral_prepare_callbacks_.push_back(std::move(callback));
+  }
   void add_sleep_callback(std::function<void()> callback) {
     sleep_callbacks_.push_back(std::move(callback));
   }
@@ -151,6 +155,7 @@ class DeepSleepComponent : public Component {
   PeripheralManager peripheral_mgr_;
   std::vector<Trigger<> *> sleep_triggers_;
   std::vector<Trigger<WakeupCause, int32_t> *> wake_triggers_;
+  std::vector<std::function<bool()>> peripheral_prepare_callbacks_;
   std::vector<std::function<void()>> sleep_callbacks_;
   std::vector<std::function<void(WakeupCause, int32_t)>> wake_callbacks_;
   std::vector<std::function<void(AbortReason)>> abort_callbacks_;

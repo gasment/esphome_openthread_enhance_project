@@ -373,6 +373,13 @@ void DeepSleepComponent::sleep_() {
   atomic_clear(&wake_flags_);
   atomic_set(&wake_pin_, -1);
   for (auto &callback : sleep_callbacks_) callback();
+  for (auto &callback : peripheral_prepare_callbacks_) {
+    if (!callback()) {
+      ESP_LOGW(TAG, "Peripheral DMA preparation failed; sleep cancelled");
+      abort_(PERIPHERAL_ERROR);
+      return;
+    }
+  }
   phase_ = Phase::SLEEPING;
   if (!peripheral_mgr_.suspend()) {
     ESP_LOGW(TAG, "Peripheral suspend failed; restoring peripherals and cancelling sleep");
