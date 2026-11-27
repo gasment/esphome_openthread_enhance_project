@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2026-11-27 · nRF52 UART 校验接口
+
+- UART 设备参数校验使用标准 `uart.final_validate_device_schema()` Python 接口；修复兼容层内部旧接口调用导致包含 UART 头文件即出现弃用警告的问题。
+- 旧 C++ 入口保留兼容并提示迁移至 `uart` 新接口，不改变串口收发行为或 YAML 配置。
+
 ## 2026-11-26 · ESP32 P2P 动作级回调
 
 - 将已验收的 nRF52 send 动作级 `on_send_success`、`on_send_fail` 同步到 ESP32 `thread_p2p_transporter`；动作级回调须配置 ack，组件级回调保持兼容。

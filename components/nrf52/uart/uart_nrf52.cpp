@@ -14,7 +14,17 @@ static const char *const TAG = "uart_nrf52";
 PROGMEM_STRING_TABLE(UARTParityStrings, "NONE", "EVEN", "ODD", "UNKNOWN");
 
 void UARTDevice::check_uart_nrf52_settings(uint32_t baud_rate, uint8_t stop_bits, UARTParityOptions parity,
+                                         uint8_t data_bits) {
+  this->check_uart_settings_(baud_rate, stop_bits, parity, data_bits);
+}
+
+void UARTDevice::check_uart_settings(uint32_t baud_rate, uint8_t stop_bits, UARTParityOptions parity,
                                      uint8_t data_bits) {
+  this->check_uart_settings_(baud_rate, stop_bits, parity, data_bits);
+}
+
+void UARTDevice::check_uart_settings_(uint32_t baud_rate, uint8_t stop_bits, UARTParityOptions parity,
+                                      uint8_t data_bits) {
   if (this->parent_->get_baud_rate() != baud_rate) {
     ESP_LOGE(TAG, "  Invalid baud_rate: Integration requested baud_rate %" PRIu32 " but you have %" PRIu32 "!",
              baud_rate, this->parent_->get_baud_rate());

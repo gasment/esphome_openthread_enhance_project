@@ -130,18 +130,18 @@ class UARTDevice {
   }
 
  public:
-  /// Check that the configuration of the uart_nrf52 bus matches the provided values and otherwise print a warning
-  ESPDEPRECATED("Use uart_nrf52.final_validate_device_schema() in Python instead. Removed in 2027.3.0", "2026.9.0")
+  // Legacy entry points only. New UART devices validate their requirements
+  // with uart.final_validate_device_schema() during Python final validation.
+  ESPDEPRECATED("Use uart.final_validate_device_schema() in Python instead. Removed in 2027.3.0", "2026.9.0")
   void check_uart_nrf52_settings(uint32_t baud_rate, uint8_t stop_bits = 1,
-                           UARTParityOptions parity = UART_CONFIG_PARITY_NONE, uint8_t data_bits = 8);
-  ESPDEPRECATED("Use uart.final_validate_device_schema() in Python instead.", "2026.9.0")
+                                UARTParityOptions parity = UART_CONFIG_PARITY_NONE, uint8_t data_bits = 8);
+  ESPDEPRECATED("Use uart.final_validate_device_schema() in Python instead. Removed in 2027.3.0", "2026.9.0")
   void check_uart_settings(uint32_t baud_rate, uint8_t stop_bits = 1,
-                           UARTParityOptions parity = UART_CONFIG_PARITY_NONE,
-                           uint8_t data_bits = 8) {
-    this->check_uart_nrf52_settings(baud_rate, stop_bits, parity, data_bits);
-  }
+                           UARTParityOptions parity = UART_CONFIG_PARITY_NONE, uint8_t data_bits = 8);
 
  protected:
+  // Keep compatibility checks without calling one deprecated API from another.
+  void check_uart_settings_(uint32_t baud_rate, uint8_t stop_bits, UARTParityOptions parity, uint8_t data_bits);
   UARTComponent *parent_{nullptr};
 };
 
