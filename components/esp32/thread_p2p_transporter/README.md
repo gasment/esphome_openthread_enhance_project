@@ -1,7 +1,7 @@
 # thread_p2p_transporter
 
 Thread 网内单播通讯，支持自动多跳，不依赖 Wi-Fi、HA、BR 或网关服务。
-依赖本项目的 `openthread`，当前支持 ESP32 / ESP-IDF。
+依赖本项目的 `openthread` 或 `thread_br`（二选一），当前支持 ESP32 / ESP-IDF。
 
 本文按 **SED 发送 → REED 发送 → REED 接收** 配置。示例统一使用你的网络前缀：
 
@@ -330,3 +330,21 @@ ESP32 与 nRF52 一样支持 `send` 下的 `on_send_success`、`on_send_fail`，
 ```
 
 回调参数为 `send_flag`（uint8_t）、`message_id`（uint32_t）。回调随每条待确认消息独立保存，相同 flag 或同一动作并发发送不共享消息结果；收到匹配 ACK 后成功一次，本地拒绝或重试耗尽后失败一次。本地失败延迟到动作返回后触发；回调之前先移除待确认消息，允许回调中继续发送。重复/迟到 ACK 不重复触发。组件级回调保留，先执行组件级、再执行本次动作级回调；若组件级回调已触发关闭，动作级回调跳过。关闭时取消剩余消息，不触发动作级结果回调。send 仍为非阻塞，不等待 ACK 才执行后续动作；报文协议不变，无需更新接收端。
+
+
+## 在 BR 上使用
+
+ESP32 `thread_p2p_transporter` 支持 `openthread` 或 `thread_br` 二选一作为协议栈提供方。已配置 BR 时无需、也不要额外配置 `openthread:`；自动使用现有 BR 实例，支持 native 和 uart_rcp，无需新增父组件 ID 配置。
+
+```yaml
+# 保留原有 thread_br 配置；它的 thread_network_config.mesh_local_prefix
+# 必须与下面的本机及目标地址处于同一 /64。
+thread_p2p_transporter:
+  id: p2p_transport
+  address: fdd1:dd68:9fa3:d942::1001  # BR 按 FTD 处理，必须指定独立 P2P 应用地址
+  send_to_addr_list:
+    - id: target_node
+      address: fdd1:dd68:9fa3:d942::1002
+```
+
+BR 模式直接复用 ESP-IDF OT 锁及实例，实际 Thread role 检查仍在锁内执行；不修改 BR 的启动或网络逻辑。P2P 报文、ACK 和动作级回调保持不变。nRF52 版仍只依赖 `openthread_nrf52`，不受此变更影响。

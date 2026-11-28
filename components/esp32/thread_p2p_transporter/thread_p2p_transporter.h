@@ -8,7 +8,12 @@
 #include <vector>
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/defines.h"
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+#include "esphome/components/thread_br/thread_br.h"
+#else
 #include "esphome/components/openthread/openthread.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "openthread/ip6.h"
@@ -47,7 +52,10 @@ class ThreadP2PTransporter : public Component {
   void add_target(const std::string &id, const std::string &address, uint16_t port) {
     targets_.push_back({id, address, {}, port});
   }
-  bool is_ready() const { return !shutdown_ && ready_ && ot_ != nullptr && ot_->is_connected(); }
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+  void set_thread_br(thread_br::ThreadBorderRouter *parent) { br_ = parent; }
+#endif
+  bool is_ready() const { return !shutdown_ && ready_ && this->stack_connected_(); }
   bool send(const std::string &target, bool direct_address, std::optional<uint16_t> port_override, uint8_t flag,
             const Payload &payload, uint32_t ack_timeout = 0, uint8_t resend = 0, SendCompletion completion = {});
   void add_on_receive_callback(std::function<void(uint8_t, Payload)> fn) { receive_callbacks_.add(std::move(fn)); }
@@ -80,7 +88,13 @@ class ThreadP2PTransporter : public Component {
   void process_(const Packet &packet);
   void notify_fail_(uint8_t flag, uint32_t id, SendCompletion completion = {});
   void complete_(bool success, uint8_t flag, uint32_t id, const SendCompletion &completion);
+  bool stack_initialized_() const;
+  bool stack_connected_() const;
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+  thread_br::ThreadBorderRouter *br_{nullptr};
+#else
   openthread::OpenThreadComponent *ot_{nullptr};
+#endif
   otUdpSocket socket_{};
   otIp6Address address_{};
   otMeshLocalPrefix prefix_{};
