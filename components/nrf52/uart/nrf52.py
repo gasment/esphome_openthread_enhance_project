@@ -10,8 +10,12 @@ def configure_uart(config, port):
         "SERIAL": True,
         "RING_BUFFER": True,
         "UART_USE_RUNTIME_CONFIGURE": True,
-        "UART_INTERRUPT_DRIVEN": True,
-        f"UART_{port}_INTERRUPT_DRIVEN": True,
+        "UART_ASYNC_API": True,
+        "UART_NRFX_UARTE_LEGACY_SHIM": True,
+        "UART_NRFX_UARTE_ENHANCED_RX": True,
+        f"UART_{port}_INTERRUPT_DRIVEN": False,
+        f"UART_{port}_ASYNC": True,
+        f"UART_{port}_NRF_ASYNC_LOW_POWER": False,
     }.items():
         zephyr_add_prj_conf(key, value)
 

@@ -1,5 +1,16 @@
 # 更新日志
 
+## 2026-11-28 · ESP32 P2P 支持 BR
+
+- `thread_p2p_transporter` 接受 `openthread` 或 `thread_br` 作为协议栈提供方，BR 模式复用已有实例与锁，不再要求额外配置 openthread；支持 native 和 uart_rcp。
+- BR 按 FTD 检查固定 P2P 应用地址，使用 BR Dataset 的 Mesh-Local 前缀校验目标；现有收发协议、ACK 和回调不变，nRF52 组件不修改。
+
+## 2026-11-27 · nRF52 UART 异步 DMA
+
+- nRF52 UART 收发改为 Zephyr 异步 EasyDMA，接收使用两个固定 256 字节 DMA 缓冲，替代旧的逐字节中断重启方式；继续支持标准及 256000 自定义波特率。
+- nRF52 默认软件 RX 缓冲增至 1024 字节，显式 rx_buffer_size 保持有效；保留硬件接收错误和软件溢出统计。发送使用持久 RAM 缓冲，确认完成或中止后才能复用。
+- 与 deep_sleep_nrf52 联动，在用户休眠动作完成后、外设挂起前确认 DMA 停止；失败取消休眠，唤醒或取消休眠后恢复接收。搭配休眠时需同时更新两个组件，现有 YAML 无需新增配置。
+
 ## 2026-11-27 · nRF52 UART 校验接口
 
 - UART 设备参数校验使用标准 `uart.final_validate_device_schema()` Python 接口；修复兼容层内部旧接口调用导致包含 UART 头文件即出现弃用警告的问题。

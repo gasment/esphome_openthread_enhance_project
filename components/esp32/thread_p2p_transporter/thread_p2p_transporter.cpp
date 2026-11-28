@@ -14,6 +14,46 @@
 namespace esphome::thread_p2p_transporter {
 static const char *const TAG = "thread_p2p_transporter";
 
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+// The BR owns the single ESP-IDF OpenThread instance. Never instantiate a
+// second openthread component just to obtain its lock wrapper.
+class P2PInstanceLock {
+ public:
+  static P2PInstanceLock try_acquire(int timeout_ms) {
+    return P2PInstanceLock(esp_openthread_lock_acquire(pdMS_TO_TICKS(timeout_ms)));
+  }
+  P2PInstanceLock(const P2PInstanceLock &) = delete;
+  P2PInstanceLock(P2PInstanceLock &&) = delete;
+  P2PInstanceLock &operator=(const P2PInstanceLock &) = delete;
+  P2PInstanceLock &operator=(P2PInstanceLock &&) = delete;
+  ~P2PInstanceLock() { if (owns_) esp_openthread_lock_release(); }
+  explicit operator bool() const { return owns_; }
+  otInstance *get_instance() { return owns_ ? esp_openthread_get_instance() : nullptr; }
+ private:
+  explicit P2PInstanceLock(bool owns) : owns_(owns) {}
+  bool owns_;
+};
+#else
+using P2PInstanceLock = openthread::InstanceLock;
+#endif
+
+bool ThreadP2PTransporter::stack_initialized_() const {
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+  return this->br_ != nullptr && this->br_->is_thread_ready();
+#else
+  return this->ot_ != nullptr && this->ot_->is_lock_initialized();
+#endif
+}
+
+bool ThreadP2PTransporter::stack_connected_() const {
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+  return this->stack_initialized_();  // Actual role is checked under lock in open_()/transmit_().
+#else
+  return this->ot_ != nullptr && this->ot_->is_connected();
+#endif
+}
+
+
 // Version 1: P2P1 | kind | type | send_flag | options | session(8) |
 // message_id(4) | payload_length(2) | reserved(2). Integers are network byte order.
 static uint64_t read_be(const uint8_t *p, size_t count) {
@@ -64,9 +104,14 @@ static bool valid_target(const otIp6Address &target, const otMeshLocalPrefix &pr
 }
 
 void ThreadP2PTransporter::setup() {
+#ifdef USE_THREAD_P2P_TRANSPORTER_THREAD_BR
+  const bool stack_configured = this->br_ != nullptr;
+#else
   ot_ = openthread::global_openthread_component;
+  const bool stack_configured = this->ot_ != nullptr;
+#endif
   session_ = (uint64_t(esp_random()) << 32) | esp_random();
-  if (ot_ == nullptr || (!sender_only_ && otIp6AddressFromString(address_text_.c_str(), &address_) != OT_ERROR_NONE)) {
+  if (!stack_configured || (!sender_only_ && otIp6AddressFromString(address_text_.c_str(), &address_) != OT_ERROR_NONE)) {
     ESP_LOGE(TAG, "OpenThread component or local address is invalid");
     mark_failed();
     return;
@@ -83,12 +128,12 @@ void ThreadP2PTransporter::setup() {
 }
 
 bool ThreadP2PTransporter::open_() {
-  if (shutdown_ || is_failed() || ot_ == nullptr || !ot_->is_lock_initialized() || !ot_->is_connected()) {
+  if (shutdown_ || is_failed() || !this->stack_initialized_() || !this->stack_connected_()) {
     ready_ = false;
     return false;
   }
   if (retry_pending_ && uint32_t(millis() - retry_at_) < 1000) return false;
-  auto lock = openthread::InstanceLock::try_acquire(0);
+  auto lock = P2PInstanceLock::try_acquire(0);
   if (!lock) return false;
   auto *instance = lock.get_instance();
   if (instance == nullptr || otThreadGetDeviceRole(instance) < OT_DEVICE_ROLE_CHILD) {
@@ -192,7 +237,7 @@ void ThreadP2PTransporter::receive_(void *context, otMessage *message, const otM
 
 bool ThreadP2PTransporter::transmit_(const otIp6Address &target, uint16_t port, const std::string &wire) {
   if (!open_() || std::memcmp(target.mFields.m8, prefix_.m8, 8) != 0) return false;
-  auto lock = openthread::InstanceLock::try_acquire(0);
+  auto lock = P2PInstanceLock::try_acquire(0);
   if (!lock) return false;
   auto *instance = lock.get_instance();
   if (!instance || otThreadGetDeviceRole(instance) < OT_DEVICE_ROLE_CHILD) return false;
@@ -366,8 +411,8 @@ void ThreadP2PTransporter::on_shutdown() {
   shutdown_ = true;
   ready_ = false;
   pending_.clear();
-  if (ot_ == nullptr || !ot_->is_lock_initialized()) return;
-  auto lock = openthread::InstanceLock::try_acquire(0);
+  if (!this->stack_initialized_()) return;
+  auto lock = P2PInstanceLock::try_acquire(0);
   if (!lock) return;
   auto *instance = lock.get_instance();
   if (instance == nullptr) return;

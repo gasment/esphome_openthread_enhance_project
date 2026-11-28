@@ -8,9 +8,9 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
-from esphome.core import Lambda
+from esphome.core import CORE, Lambda
 
-DEPENDENCIES = ["esp32", "openthread"]
+DEPENDENCIES = ["esp32"]
 ns = cg.esphome_ns.namespace("thread_p2p_transporter")
 ThreadP2PTransporter = ns.class_("ThreadP2PTransporter", cg.Component)
 Payload = ns.struct("Payload")
@@ -111,6 +111,14 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
 }).extend(cv.COMPONENT_SCHEMA), validate)
 
 
+def thread_settings(full):
+    if ("openthread" in full) == ("thread_br" in full):
+        raise cv.Invalid("thread_p2p_transporter requires exactly one of openthread or thread_br")
+    if "thread_br" in full:
+        return {**full["thread_br"]["thread_network_config"], "device_type": "FTD"}
+    return full["openthread"]
+
+
 def configured_prefix(ot):
     if ot.get("tlv"):
         raw = bytes.fromhex(ot["tlv"])
@@ -128,6 +136,8 @@ def configured_prefix(ot):
                 return ipaddress.IPv6Network((ipaddress.IPv6Address(raw[offset:offset + length] + bytes(8)), 64))
             offset += length
         return None
+    if ot.get("thread_network_config"):
+        return configured_prefix(ot["thread_network_config"])
     if ot.get("mesh_local_prefix"):
         return ipaddress.IPv6Network(ot["mesh_local_prefix"])
     return None  # The active persisted/default dataset is checked again at runtime.
@@ -136,7 +146,7 @@ def configured_prefix(ot):
 
 def final_validate(config):
     full = fv.full_config.get()
-    ot = full.get("openthread", {})
+    ot = thread_settings(full)
     if ot.get("device_type", "FTD") == "MTD":
         for key in ("address", "port", "on_receive"):
             if key in config:
@@ -147,7 +157,7 @@ def final_validate(config):
     addresses = ([config["address"]] if "address" in config else [])
     addresses.extend(entry["address"] for entry in config["send_to_addr_list"])
     if prefix and any(ipaddress.IPv6Address(value) not in prefix for value in addresses):
-        raise cv.Invalid("All addresses must belong to openthread.mesh_local_prefix /64")
+        raise cv.Invalid("All addresses must belong to the Mesh-Local /64 configured by openthread or thread_br")
     def walk(value):
         if isinstance(value, dict):
             for key, entry in value.items():
@@ -167,6 +177,9 @@ FINAL_VALIDATE_SCHEMA = final_validate
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    if "thread_br" in CORE.config:
+        cg.add_define("USE_THREAD_P2P_TRANSPORTER_THREAD_BR")
+        cg.add(var.set_thread_br(await cg.get_variable(CORE.config["thread_br"][CONF_ID])))
     cg.add(var.set_sender_only("address" not in config))
     if "address" in config:
         cg.add(var.set_address(config["address"], config["port"]))
@@ -220,9 +233,9 @@ def validate_send_final(config):
             raise cv.Invalid("send_to does not exist in send_to_addr_list")
     if "address" in config and not isinstance(config["address"], Lambda):
         target = ipaddress.IPv6Address(config["address"])
-        prefix = configured_prefix(full.get("openthread", {}))
+        prefix = configured_prefix(thread_settings(full))
         if prefix and target not in prefix:
-            raise cv.Invalid("Target address must belong to openthread.mesh_local_prefix /64")
+            raise cv.Invalid("Target address must belong to the Mesh-Local /64 configured by openthread or thread_br")
         if parent.get("address") == config["address"]:
             raise cv.Invalid("Target address must not be the local address")
     return config

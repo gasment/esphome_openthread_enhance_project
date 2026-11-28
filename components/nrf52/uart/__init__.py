@@ -318,7 +318,7 @@ CONFIG_SCHEMA = cv.All(
                 cv.only_on_esp32, pins.internal_gpio_output_pin_schema
             ),
             cv.Optional(CONF_PORT): cv.All(validate_port, cv.only_on(PLATFORM_HOST)),
-            cv.Optional(CONF_RX_BUFFER_SIZE, default=256): cv.validate_bytes,
+            cv.Optional(CONF_RX_BUFFER_SIZE, default=lambda: 1024 if CORE.is_nrf52 else 256): cv.validate_bytes,
             cv.Optional(CONF_RX_FULL_THRESHOLD): cv.All(
                 cv.only_on_esp32, cv.validate_bytes, cv.int_range(min=1, max=120)
             ),
@@ -424,6 +424,18 @@ async def to_code_with_domain(config, domain):
     cg.add(var.set_stop_bits(config[CONF_STOP_BITS]))
     cg.add(var.set_data_bits(config[CONF_DATA_BITS]))
     cg.add(var.set_parity(config[CONF_PARITY]))
+
+    if CORE.is_nrf52:
+        # Stop DMA after user on_sleep actions but before device PM; restore
+        # before on_wake/on_abort automations can access UART.
+        sleeps = CORE.config.get("deep_sleep_nrf52", [])
+        if isinstance(sleeps, dict):
+            sleeps = [sleeps]
+        for sleep_config in sleeps:
+            sleep = await cg.get_variable(sleep_config[CONF_ID])
+            cg.add(sleep.add_peripheral_prepare_callback(cg.RawExpression(f"[]() {{ return {config[CONF_ID]}->prepare_sleep(); }}")))
+            cg.add(sleep.add_wake_callback(cg.RawExpression(f"[](esphome::deep_sleep_nrf52::WakeupCause, int32_t) {{ {config[CONF_ID]}->resume_from_sleep(); }}")))
+            cg.add(sleep.add_abort_callback(cg.RawExpression(f"[](esphome::deep_sleep_nrf52::AbortReason) {{ {config[CONF_ID]}->resume_from_sleep(); }}")))
 
     if CONF_DEBUG in config:
         await debug_to_code(config[CONF_DEBUG], var)
